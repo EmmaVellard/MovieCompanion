@@ -154,11 +154,55 @@ export interface LetterboxdDataStatus {
 export interface TasteStat {
   key: string;
   label: string;
+  dimension: TasteDimension;
   averageRating: number;
   regularizedRating: number;
   differenceFromOverall: number;
+  regularizedDifference: number;
   sampleSize: number;
   confidence: number;
+}
+
+export type TasteDimension =
+  | 'genre'
+  | 'genre-combination'
+  | 'director'
+  | 'country'
+  | 'language'
+  | 'keyword'
+  | 'runtime'
+  | 'cast'
+  | 'decade'
+  | 'interaction';
+
+export type RuntimeBand = 'under-90' | '90-120' | '120-150' | 'over-150';
+
+export interface MovieFeatures {
+  genres: string[];
+  genreCombinations: string[];
+  director: string | null;
+  countries: string[];
+  language: string | null;
+  keywords: string[];
+  runtimeBand: RuntimeBand | null;
+  cast: string[];
+  decade: string | null;
+  year: number | null;
+  runtimeMinutes: number | null;
+}
+
+export interface TasteInteractionStat extends TasteStat {
+  components: Array<{
+    dimension: Exclude<TasteDimension, 'interaction'>;
+    key: string;
+    label: string;
+  }>;
+  interactionLift: number;
+}
+
+export interface TastePattern {
+  stat: TasteStat | TasteInteractionStat;
+  kind: 'strong' | 'weak' | 'unexpected';
 }
 
 export interface TasteProfile {
@@ -166,8 +210,19 @@ export interface TasteProfile {
   overallAverage: number | null;
   decades: TasteStat[];
   genres: TasteStat[];
+  genreCombinations: TasteStat[];
+  directors: TasteStat[];
+  countries: TasteStat[];
+  languages: TasteStat[];
+  keywords: TasteStat[];
+  runtimeBands: TasteStat[];
+  cast: TasteStat[];
+  interactions: TasteInteractionStat[];
   strongestDecades: TasteStat[];
   weakestDecades: TasteStat[];
+  strongestPatterns: TastePattern[];
+  weakestPatterns: TastePattern[];
+  unexpectedPatterns: TastePattern[];
   averageRatedYear: number | null;
   highRatedMovies: Array<{
     id: string;
@@ -175,6 +230,7 @@ export interface TasteProfile {
     year: number | null;
     rating: number;
     genres: string[];
+    features: MovieFeatures;
   }>;
   metadataCoverage: {
     genres: boolean;
@@ -183,6 +239,10 @@ export interface TasteProfile {
     languages: boolean;
     runtime: boolean;
     posters: boolean;
+    keywords: boolean;
+    cast: boolean;
+    matchedRatedMovies: number;
+    totalRatedMovies: number;
   };
 }
 
@@ -226,7 +286,30 @@ export interface RecommendationSignals {
   tasteScore: number;
   tonightScore: number;
   finalScore: number;
+  tasteComponents: TasteScoreComponent[];
   contributions: RecommendationContribution[];
+}
+
+export type TasteScoreComponentName =
+  | 'genres'
+  | 'genre combinations'
+  | 'keywords'
+  | 'director'
+  | 'cast'
+  | 'country and language'
+  | 'decade'
+  | 'runtime'
+  | 'interaction patterns'
+  | 'similarity'
+  | 'evidence confidence';
+
+export interface TasteScoreComponent {
+  name: TasteScoreComponentName;
+  score: number;
+  confidence: number;
+  weight: number;
+  contribution: number;
+  evidence: string[];
 }
 
 export interface RecommendationContribution {

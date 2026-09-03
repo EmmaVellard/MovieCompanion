@@ -270,6 +270,7 @@ export function MovieCompanionApp() {
         {view === 'taste' && (
           <TasteView
             profile={profile}
+            library={library}
             loading={loading}
             onImport={() => setImportOpen(true)}
           />

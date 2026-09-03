@@ -87,6 +87,12 @@ For Vercel, choose **Add New Project**, import the GitHub repository, and keep t
 
 Add `TMDB_READ_ACCESS_TOKEN` to the Vercel project's Environment Variables before deploying. Do not use a `NEXT_PUBLIC_` prefix: the credential must remain server-only.
 
+GitHub Pages is not a compatible production host for the full app. Pages can
+only serve a static export, while Movie Companion uses the server-side
+`/api/tmdb/enrich` route to keep the TMDB credential out of browser JavaScript.
+The GitHub workflow therefore verifies the repository; deployment is handled by
+Vercel's GitHub integration.
+
 ## Verify changes
 
 ```bash

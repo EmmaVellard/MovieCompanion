@@ -301,8 +301,8 @@ export function TonightView({
           <div className="flex flex-col gap-3 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between">
             <p className="max-w-xl text-xs leading-5 text-muted-foreground">
               Taste and tonight fit are scored separately. Runtime limits are
-              strict; movies with missing runtime are excluded until metadata
-              is available.
+              strict; movies with missing runtime are excluded until metadata is
+              available.
             </p>
             <Button
               size="lg"
@@ -687,7 +687,9 @@ function RecommendationDialog({
                 {recommendation.movie.metadata?.status === 'matched' ? (
                   <p className="mt-4 rounded-xl border border-border bg-background/45 p-3 text-xs leading-5 text-muted-foreground">
                     {[
-                      recommendation.movie.metadata.genres.slice(0, 3).join(', '),
+                      recommendation.movie.metadata.genres
+                        .slice(0, 3)
+                        .join(', '),
                       recommendation.movie.metadata.runtimeMinutes
                         ? `${recommendation.movie.metadata.runtimeMinutes} min`
                         : null,
@@ -710,12 +712,26 @@ function RecommendationDialog({
                       Development score breakdown
                     </summary>
                     <p className="mt-3">
-                      Taste {Math.round(recommendation.signals.tasteScore * 100)}
+                      Taste{' '}
+                      {Math.round(recommendation.signals.tasteScore * 100)}
                       {' · '}Tonight{' '}
                       {Math.round(recommendation.signals.tonightScore * 100)}
                       {' · '}Final{' '}
                       {Math.round(recommendation.signals.finalScore * 100)}
                     </p>
+                    <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
+                      {recommendation.signals.tasteComponents.map(
+                        (component) => (
+                          <li key={component.name}>
+                            {component.name}:{' '}
+                            {Math.round(component.score * 100)}
+                            {' · '}confidence{' '}
+                            {Math.round(component.confidence * 100)}
+                            {' · '}weight {Math.round(component.weight * 100)}%
+                          </li>
+                        ),
+                      )}
+                    </ul>
                     <ul className="mt-2 space-y-1.5">
                       {recommendation.signals.contributions.map(
                         (contribution, index) => (

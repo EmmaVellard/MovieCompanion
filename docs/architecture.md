@@ -117,16 +117,25 @@ Matching should be explicit:
 
 Use TMDB's details request with appended credits and keywords to reduce requests. Respect `429` responses with backoff and make enrichment resumable.
 
-## Recommendation v1
+## Taste and recommendation v2
 
 The current deterministic engine excludes watched movies, ranks only the
-current watchlist, and separates personal taste from tonight context. Personal
-taste uses confidence-shrunk genre and decade affinity, similarity to highly
-rated films, and evidence confidence. Tonight context uses centralized mappings
-over confirmed genres, keywords, overview text, and runtime. A runtime limit is
-a hard filter; missing runtime is explicitly excluded. Final scoring weights
-taste at 56%, context at 41%, and watchlist age at 3%, with variation capped at
-0.8 percentage points so it can only reorder near ties.
+current watchlist, and separates personal taste from tonight context. A shared
+feature extractor normalizes genres, genre pairs, directors, countries,
+languages, filtered keywords, runtime bands, cast, decade, year, and runtime.
+Every preference average is regularized toward the user's overall average with
+a dimension-specific prior. Display and scoring thresholds prevent isolated
+directors, actors, keywords, or combinations from becoming strong signals.
+
+Personal Taste v2 composes modular feature scorers. Correlated features share
+bounded weight families: genres/combinations/keywords, director/cast,
+country/language, and decade/runtime. Interaction and rich-similarity signals
+have deliberately small weights until evaluation shows that they generalize.
+Tonight context still uses centralized mappings over confirmed genres,
+keywords, overview text, and runtime. A runtime limit is a hard filter; missing
+runtime is explicitly excluded. Final scoring weights taste at 56%, context at
+41%, and watchlist age at 3%, with variation capped at 0.8 percentage points so
+it can only reorder near ties.
 
 The engine:
 
@@ -145,6 +154,17 @@ Safe, Risky, and Wildcard should use different objectives:
 - **Safe** maximizes predicted fit and confidence.
 - **Risky** balances predicted fit with uncertainty and under-sampled regions.
 - **Wildcard** requires meaningful distance from normal viewing while preserving at least one strong positive taste signal.
+
+## Offline evaluation
+
+The development-only evaluator runs leave-one-out validation entirely in the
+browser. For each rated film it rebuilds the profile without that film, predicts
+the held-out rating, and reports mean absolute error, Pearson correlation,
+liked-versus-disliked ranking accuracy, top-quartile precision, and pairwise
+ranking accuracy. A cumulative ablation table compares genres/decades with
+directors, origin, keywords, genre combinations, runtime, cast, interactions,
+and richer similarity. The evaluator is on demand so it does not slow normal
+app startup or recommendations.
 
 ## Small milestones
 

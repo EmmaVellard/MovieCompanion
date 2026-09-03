@@ -5,6 +5,9 @@ import {
   scoreRuntime,
   type ContextSignal,
 } from '@/lib/recommendation-mappings';
+import { extractMovieFeatures } from '@/lib/movie-features';
+import { movieSimilarity } from '@/lib/movie-similarity';
+import { affinityFromStats, clamp } from '@/lib/statistics';
 import { formatDecade } from '@/lib/taste-profile';
 import type {
   MovieLibrary,
@@ -14,7 +17,10 @@ import type {
   RecommendationMode,
   RecommendationResult,
   RecommendationSignals,
+  TasteScoreComponent,
+  TasteScoreComponentName,
   TasteProfile,
+  TasteStat,
   WatchlistMovie,
 } from '@/lib/types';
 
@@ -29,11 +35,27 @@ interface TasteSignals {
   metadataSimilarity: number;
   genreAffinity: number;
   genreConfidence: number;
+  evidenceConfidence: number;
   watchlistAge: number;
   habitDistance: number;
   tasteScore: number;
+  tasteComponents: TasteScoreComponent[];
   contributions: RecommendationContribution[];
 }
+
+export const PERSONAL_TASTE_WEIGHTS: Record<TasteScoreComponentName, number> = {
+  genres: 0.22,
+  'genre combinations': 0.12,
+  keywords: 0.06,
+  director: 0.13,
+  cast: 0.01,
+  'country and language': 0.06,
+  decade: 0.14,
+  runtime: 0.16,
+  'interaction patterns': 0.025,
+  similarity: 0.025,
+  'evidence confidence': 0.05,
+};
 
 interface CandidateScore {
   movie: WatchlistMovie;
@@ -46,10 +68,6 @@ interface CandidateScore {
     runtime: string[];
   };
   limitedMetadata: boolean;
-}
-
-function clamp(value: number, minimum = 0, maximum = 1) {
-  return Math.min(maximum, Math.max(minimum, value));
 }
 
 function hashUnit(value: string) {
@@ -69,38 +87,224 @@ function watchlistAge(dateValue: string | null, nowMs: number) {
   return clamp(days / (365 * 4));
 }
 
-function genreOverlap(first: string[], second: string[]) {
-  if (first.length === 0 || second.length === 0) return 0;
-  const a = new Set(first.map((genre) => genre.toLowerCase()));
-  const b = new Set(second.map((genre) => genre.toLowerCase()));
-  let intersection = 0;
-  for (const genre of a) {
-    if (b.has(genre)) intersection += 1;
-  }
-  return intersection / new Set([...a, ...b]).size;
+function matchingStats(keys: Array<string | null>, stats: TasteStat[]) {
+  const wanted = new Set(keys.filter((key): key is string => Boolean(key)));
+  return stats.filter((stat) => wanted.has(stat.key));
 }
 
-function closestHighlyRatedMovie(movie: WatchlistMovie, profile: TasteProfile) {
-  const candidateGenres = movie.metadata?.genres ?? [];
-  return (
+function supportedStats(
+  keys: Array<string | null>,
+  stats: TasteStat[],
+  minimumSamples: number,
+) {
+  return matchingStats(keys, stats).filter(
+    (stat) => stat.sampleSize >= minimumSamples,
+  );
+}
+
+function evidenceLabel(stats: TasteStat[]) {
+  return [...stats]
+    .sort(
+      (a, b) =>
+        Math.abs(b.regularizedDifference) * b.confidence -
+        Math.abs(a.regularizedDifference) * a.confidence,
+    )
+    .slice(0, 2)
+    .map(
+      (stat) =>
+        `${stat.label} ${stat.regularizedDifference >= 0 ? '+' : ''}${stat.regularizedDifference.toFixed(1)} (${stat.sampleSize})`,
+    );
+}
+
+function scoreComponent(
+  name: TasteScoreComponentName,
+  score: number,
+  confidence: number,
+  evidence: string[],
+): TasteScoreComponent {
+  const weight = PERSONAL_TASTE_WEIGHTS[name];
+  return {
+    name,
+    score: clamp(score),
+    confidence: clamp(confidence),
+    weight,
+    contribution: clamp(score) * weight,
+    evidence,
+  };
+}
+
+function combinedAffinity(
+  first: ReturnType<typeof affinityFromStats>,
+  second: ReturnType<typeof affinityFromStats>,
+  firstWeight: number,
+) {
+  return {
+    score: first.score * firstWeight + second.score * (1 - firstWeight),
+    confidence:
+      first.confidence * firstWeight + second.confidence * (1 - firstWeight),
+    evidence: [...first.evidence, ...second.evidence],
+  };
+}
+
+function interactionMatches(
+  profile: TasteProfile,
+  features: ReturnType<typeof extractMovieFeatures>,
+) {
+  const values: Partial<Record<string, Set<string>>> = {
+    genre: new Set(features.genres),
+    country: new Set(features.countries),
+    language: new Set(features.language ? [features.language] : []),
+    keyword: new Set(features.keywords),
+  };
+  return profile.interactions.filter((stat) =>
+    stat.components.every((component) =>
+      values[component.dimension]?.has(component.key),
+    ),
+  );
+}
+
+export function scorePersonalTaste(
+  movie: Pick<WatchlistMovie, 'id' | 'title' | 'year' | 'metadata'>,
+  profile: TasteProfile,
+) {
+  const features = extractMovieFeatures(movie.metadata, movie.year);
+  const neutralScore = clamp(((profile.overallAverage ?? 3) - 1) / 4);
+  const affinity = (stats: TasteStat[]) =>
+    affinityFromStats(stats, neutralScore);
+  const genres = affinity(matchingStats(features.genres, profile.genres));
+  const combinations = affinity(
+    supportedStats(features.genreCombinations, profile.genreCombinations, 3),
+  );
+  const keywords = affinity(
+    supportedStats(features.keywords, profile.keywords, 3),
+  );
+  const director = affinity(
+    supportedStats([features.director], profile.directors, 2),
+  );
+  const cast = affinity(supportedStats(features.cast, profile.cast, 4));
+  const country = affinity(
+    supportedStats(features.countries, profile.countries, 3),
+  );
+  const language = affinity(
+    supportedStats([features.language], profile.languages, 3),
+  );
+  const origin = combinedAffinity(country, language, 0.58);
+  const decade = affinity(matchingStats([features.decade], profile.decades));
+  const runtime = affinity(
+    supportedStats([features.runtimeBand], profile.runtimeBands, 5),
+  );
+  const interactions = affinity(interactionMatches(profile, features));
+  const closest =
     profile.highRatedMovies
-      .map((ratedMovie) => {
-        const yearSimilarity =
-          movie.year !== null && ratedMovie.year !== null
-            ? clamp(1 - Math.abs(movie.year - ratedMovie.year) / 35)
-            : 0;
-        const overlap = genreOverlap(candidateGenres, ratedMovie.genres);
-        const similarity =
-          overlap > 0
-            ? overlap * 0.72 + yearSimilarity * 0.28
-            : yearSimilarity * 0.45;
-        return { movie: ratedMovie, yearSimilarity, similarity };
-      })
+      .filter((ratedMovie) => ratedMovie.id !== movie.id)
+      .map((ratedMovie) => ({
+        movie: ratedMovie,
+        similarity: movieSimilarity(features, ratedMovie.features),
+      }))
       .sort(
         (a, b) =>
-          b.similarity - a.similarity || b.movie.rating - a.movie.rating,
-      )[0] ?? null
+          b.similarity.score * b.similarity.confidence -
+            a.similarity.score * a.similarity.confidence ||
+          b.movie.rating - a.movie.rating,
+      )[0] ?? null;
+  const similarityScore = closest?.similarity.score ?? neutralScore;
+  const similarityConfidence = closest?.similarity.confidence ?? 0;
+  const evidenceConfidence =
+    [
+      genres,
+      combinations,
+      keywords,
+      director,
+      cast,
+      origin,
+      decade,
+      runtime,
+      interactions,
+    ].reduce((total, signal) => total + signal.confidence, 0) / 9;
+  const components: TasteScoreComponent[] = [
+    scoreComponent(
+      'genres',
+      genres.score,
+      genres.confidence,
+      evidenceLabel(genres.evidence),
+    ),
+    scoreComponent(
+      'genre combinations',
+      combinations.score,
+      combinations.confidence,
+      evidenceLabel(combinations.evidence),
+    ),
+    scoreComponent(
+      'keywords',
+      keywords.score,
+      keywords.confidence,
+      evidenceLabel(keywords.evidence),
+    ),
+    scoreComponent(
+      'director',
+      director.score,
+      director.confidence,
+      evidenceLabel(director.evidence),
+    ),
+    scoreComponent(
+      'cast',
+      cast.score,
+      cast.confidence,
+      evidenceLabel(cast.evidence),
+    ),
+    scoreComponent(
+      'country and language',
+      origin.score,
+      origin.confidence,
+      evidenceLabel(origin.evidence),
+    ),
+    scoreComponent(
+      'decade',
+      decade.score,
+      decade.confidence,
+      evidenceLabel(decade.evidence),
+    ),
+    scoreComponent(
+      'runtime',
+      runtime.score,
+      runtime.confidence,
+      evidenceLabel(runtime.evidence),
+    ),
+    scoreComponent(
+      'interaction patterns',
+      interactions.score,
+      interactions.confidence,
+      evidenceLabel(interactions.evidence),
+    ),
+    scoreComponent(
+      'similarity',
+      similarityScore,
+      similarityConfidence,
+      closest
+        ? [
+            `${closest.movie.title}${closest.similarity.sharedFeatures.length > 0 ? ` · ${closest.similarity.sharedFeatures.join(', ')}` : ''}`,
+          ]
+        : [],
+    ),
+    scoreComponent(
+      'evidence confidence',
+      neutralScore * (0.9 + evidenceConfidence * 0.1),
+      evidenceConfidence,
+      [`${Math.round(evidenceConfidence * 100)}% feature evidence`],
+    ),
+  ];
+  const tasteScore = clamp(
+    components.reduce((total, component) => total + component.contribution, 0),
   );
+  return {
+    tasteScore,
+    components,
+    closest,
+    features,
+    genreAffinity: genres.score,
+    genreConfidence: genres.confidence,
+    evidenceConfidence,
+  };
 }
 
 function tasteSignals(
@@ -108,85 +312,48 @@ function tasteSignals(
   profile: TasteProfile,
   nowMs: number,
 ): TasteSignals {
+  const scored = scorePersonalTaste(movie, profile);
   const decade = movie.year === null ? null : Math.floor(movie.year / 10) * 10;
   const decadeStat = profile.decades.find(
     (stat) => stat.key === String(decade),
   );
-  const closest = closestHighlyRatedMovie(movie, profile);
+  const closest = scored.closest;
   const decadeFit = decadeStat
     ? clamp((decadeStat.regularizedRating - 1) / 4)
     : 0.5;
-  const genreStats = (movie.metadata?.genres ?? [])
-    .map((genre) => profile.genres.find((stat) => stat.key === genre))
-    .filter((stat): stat is NonNullable<typeof stat> => Boolean(stat));
-  const genreAffinity =
-    genreStats.length > 0
-      ? genreStats.reduce(
-          (total, stat) =>
-            total + clamp((stat.regularizedRating - 1) / 4),
-          0,
-        ) / genreStats.length
-      : 0.5;
-  const genreConfidence =
-    genreStats.length > 0
-      ? genreStats.reduce((total, stat) => total + stat.confidence, 0) /
-        genreStats.length
-      : 0;
-  const metadataSimilarity = closest?.similarity ?? 0;
-  const evidenceConfidence = Math.max(
-    decadeStat?.confidence ?? 0,
-    genreConfidence,
-  );
-  const tasteScore = clamp(
-    genreAffinity * 0.38 +
-      decadeFit * 0.3 +
-      metadataSimilarity * 0.2 +
-      evidenceConfidence * 0.12,
-  );
+  const metadataSimilarity = closest?.similarity.score ?? 0.5;
   const age = watchlistAge(movie.addedDate, nowMs);
   const habitDistance =
     movie.year !== null && profile.averageRatedYear !== null
       ? clamp(Math.abs(movie.year - profile.averageRatedYear) / 45)
       : 0.5;
-  const contributions: RecommendationContribution[] = [
-    {
+  const contributions: RecommendationContribution[] = scored.components.map(
+    (component) => ({
       category: 'taste',
-      label:
-        genreStats.length > 0
-          ? `genre affinity from ${genreStats.length} rated signal${genreStats.length === 1 ? '' : 's'}`
-          : 'neutral genre prior (metadata or ratings are limited)',
-      points: Math.round(genreAffinity * 38),
-    },
-    {
-      category: 'taste',
-      label: decadeStat
-        ? `${formatDecade(decade!)} rating affinity`
-        : 'neutral decade prior',
-      points: Math.round(decadeFit * 30),
-    },
-    {
-      category: 'taste',
-      label: closest?.movie
-        ? `similarity to highly rated ${closest.movie.title}`
-        : 'no comparable highly rated film yet',
-      points: Math.round(metadataSimilarity * 20),
-    },
-  ];
+      label: `${component.name}${component.evidence.length > 0 ? `: ${component.evidence.join('; ')}` : ' (neutral prior)'}`,
+      points: Math.round(component.contribution * 100),
+    }),
+  );
 
   return {
     decade: decade === null ? null : formatDecade(decade),
     decadeSampleSize: decadeStat?.sampleSize ?? 0,
-    decadeDifference: decadeStat?.differenceFromOverall ?? 0,
+    decadeDifference: decadeStat?.regularizedDifference ?? 0,
     decadeConfidence: decadeStat?.confidence ?? 0,
     decadeFit,
     similarRatedMovie: closest?.movie ?? null,
-    yearSimilarity: closest?.yearSimilarity ?? 0,
+    yearSimilarity:
+      closest?.similarity.components.find(
+        (component) => component.feature === 'year',
+      )?.score ?? 0,
     metadataSimilarity,
-    genreAffinity,
-    genreConfidence,
+    genreAffinity: scored.genreAffinity,
+    genreConfidence: scored.genreConfidence,
+    evidenceConfidence: scored.evidenceConfidence,
     watchlistAge: age,
     habitDistance,
-    tasteScore,
+    tasteScore: scored.tasteScore,
+    tasteComponents: scored.components,
     contributions,
   };
 }
@@ -235,9 +402,7 @@ function scoreTonightCandidate(
       runtime.score * 0.1,
   );
   const baseScore = clamp(
-    taste.tasteScore * 0.56 +
-      tonightScore * 0.41 +
-      taste.watchlistAge * 0.03,
+    taste.tasteScore * 0.56 + tonightScore * 0.41 + taste.watchlistAge * 0.03,
   );
   const contextKey = `${context.moods.slice().sort().join(',')}:${context.runtimeLimit}:${context.watchingWith}:${context.energy}`;
   const nearTieVariation =
@@ -303,6 +468,7 @@ function scoreTonightCandidate(
       tasteScore: taste.tasteScore,
       tonightScore,
       finalScore: score,
+      tasteComponents: taste.tasteComponents,
       contributions,
     },
     contextMatches: {
@@ -359,10 +525,7 @@ function buildTonightReasons(
       `Its ${contextMatches.energy.slice(0, 2).join(' and ')} signals fit a ${label(context.energy)} night.`,
     );
   }
-  if (
-    context.watchingWith !== 'alone' &&
-    contextMatches.company.length > 0
-  ) {
+  if (context.watchingWith !== 'alone' && contextMatches.company.length > 0) {
     reasons.push(
       `${contextMatches.company.slice(0, 2).join(' and ')} make it a stronger ${context.watchingWith} pick.`,
     );
@@ -375,10 +538,10 @@ function buildTonightReasons(
   if (
     positiveGenre &&
     positiveGenre.sampleSize >= 3 &&
-    positiveGenre.differenceFromOverall >= 0.1
+    positiveGenre.regularizedDifference >= 0.1
   ) {
     reasons.push(
-      `You rate ${positiveGenre.label} +${positiveGenre.differenceFromOverall.toFixed(1)} stars above your average across ${positiveGenre.sampleSize} films.`,
+      `Your regularized ${positiveGenre.label} pattern is +${positiveGenre.regularizedDifference.toFixed(1)} stars across ${positiveGenre.sampleSize} rated films.`,
     );
   } else if (
     signals.decade &&
@@ -389,12 +552,12 @@ function buildTonightReasons(
       `You rate ${signals.decade} films +${signals.decadeDifference.toFixed(1)} stars above your average across ${signals.decadeSampleSize} films.`,
     );
   }
-  if (
-    signals.similarRatedMovie &&
-    signals.metadataSimilarity >= 0.45
-  ) {
+  if (signals.similarRatedMovie && signals.metadataSimilarity >= 0.45) {
+    const shared = signals.tasteComponents.find(
+      (component) => component.name === 'similarity',
+    )?.evidence[0];
     reasons.push(
-      `Shares metadata or release-era signals with ${signals.similarRatedMovie.title}, which you rated ${signals.similarRatedMovie.rating} stars.`,
+      `${shared ? `${shared} connects it to` : 'Its metadata connects it to'} ${signals.similarRatedMovie.title}, which you rated ${signals.similarRatedMovie.rating} stars.`,
     );
   }
   const ageReason = waitingReason(movie, signals.watchlistAge);
@@ -468,8 +631,7 @@ export function recommendMovies({
       scoreTonightCandidate(movie, profile, context, runIndex, nowMs),
     )
     .sort(
-      (a, b) =>
-        b.score - a.score || a.movie.title.localeCompare(b.movie.title),
+      (a, b) => b.score - a.score || a.movie.title.localeCompare(b.movie.title),
     );
   const recommendations = scored.slice(0, 3).map((candidate) => ({
     movie: candidate.movie,
@@ -495,6 +657,27 @@ export function recommendMovies({
         taste: Math.round(recommendation.signals.tasteScore * 100),
         tonight: Math.round(recommendation.signals.tonightScore * 100),
         final: Math.round(recommendation.signals.finalScore * 100),
+        genres: Math.round(
+          (recommendation.signals.tasteComponents.find(
+            (item) => item.name === 'genres',
+          )?.score ?? 0.5) * 100,
+        ),
+        keywords: Math.round(
+          (recommendation.signals.tasteComponents.find(
+            (item) => item.name === 'keywords',
+          )?.score ?? 0.5) * 100,
+        ),
+        director: Math.round(
+          (recommendation.signals.tasteComponents.find(
+            (item) => item.name === 'director',
+          )?.score ?? 0.5) * 100,
+        ),
+        origin: Math.round(
+          (recommendation.signals.tasteComponents.find(
+            (item) => item.name === 'country and language',
+          )?.score ?? 0.5) * 100,
+        ),
+        similarity: Math.round(recommendation.signals.metadataSimilarity * 100),
         mood: recommendation.signals.contributions.find(
           (item) => item.category === 'mood',
         )?.label,
@@ -535,11 +718,7 @@ function surpriseReasons(
         'Its release era sits outside the center of your usual rated history.',
       );
     }
-  } else if (
-    mode === 'risky' &&
-    taste.decadeSampleSize < 5 &&
-    taste.decade
-  ) {
+  } else if (mode === 'risky' && taste.decadeSampleSize < 5 && taste.decade) {
     reasons.push(
       `Your taste model has only ${taste.decadeSampleSize} rated ${taste.decade} ${taste.decadeSampleSize === 1 ? 'film' : 'films'}, so there is useful uncertainty here.`,
     );
@@ -589,8 +768,7 @@ export function surpriseMe({
   const scored = candidates
     .map((movie) => {
       const taste = tasteSignals(movie, profile, nowMs);
-      const uncertainty =
-        1 - Math.max(taste.decadeConfidence, taste.genreConfidence);
+      const uncertainty = 1 - taste.evidenceConfidence;
       const positiveBridge = Math.max(
         taste.metadataSimilarity,
         taste.decadeFit,
@@ -610,8 +788,7 @@ export function surpriseMe({
               taste.watchlistAge * 0.08 +
               Math.max(taste.decadeConfidence, taste.genreConfidence) * 0.08;
       const score = clamp(
-        baseScore +
-          (hashUnit(`${movie.id}:${mode}:${runIndex}`) - 0.5) * 0.008,
+        baseScore + (hashUnit(`${movie.id}:${mode}:${runIndex}`) - 0.5) * 0.008,
       );
       return { movie, taste, score, positiveBridge };
     })
@@ -622,8 +799,7 @@ export function surpriseMe({
         : true,
     )
     .sort(
-      (a, b) =>
-        b.score - a.score || a.movie.title.localeCompare(b.movie.title),
+      (a, b) => b.score - a.score || a.movie.title.localeCompare(b.movie.title),
     );
   const candidate = scored[0];
   if (!candidate) return null;
@@ -642,18 +818,14 @@ export function surpriseMe({
     tasteScore: candidate.taste.tasteScore,
     tonightScore: 0.5,
     finalScore: candidate.score,
+    tasteComponents: candidate.taste.tasteComponents,
     contributions: candidate.taste.contributions,
   };
   return {
     movie: candidate.movie,
     mode,
     matchScore: scoreAsPercent(candidate.score, mode),
-    reasons: surpriseReasons(
-      candidate.movie,
-      candidate.taste,
-      profile,
-      mode,
-    ),
+    reasons: surpriseReasons(candidate.movie, candidate.taste, profile, mode),
     signals,
     limitedMetadata: candidate.movie.metadata?.status !== 'matched',
   };
