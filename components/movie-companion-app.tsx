@@ -19,21 +19,40 @@ import {
   clearLocalMovieData,
   getLetterboxdDataStatus,
   getLatestImport,
+  getMovieMetadataStatus,
   getMovieLibrary,
 } from '@/lib/database';
 import { buildTasteProfile } from '@/lib/taste-profile';
+import {
+  enrichMovieMetadata,
+  MetadataEnrichmentError,
+} from '@/lib/tmdb-client';
 import type {
   ImportSummary,
   LetterboxdDataStatus,
+  MetadataEnrichmentProgress,
+  MovieMetadataStatusSummary,
   MovieLibrary,
 } from '@/lib/types';
 
 type View = 'tonight' | 'watchlist' | 'taste' | 'data';
 
-const emptyLibrary: MovieLibrary = { watched: [], watchlist: [] };
+const emptyLibrary: MovieLibrary = {
+  watched: [],
+  watchlist: [],
+  tmdbImageConfiguration: null,
+};
 const emptyDataStatus: LetterboxdDataStatus = {
   sources: { ratings: null, watched: null, watchlist: null },
   latestImportedAt: null,
+};
+const emptyMetadataStatus: MovieMetadataStatusSummary = {
+  total: 0,
+  enriched: 0,
+  unmatched: 0,
+  ambiguous: 0,
+  errors: 0,
+  missing: 0,
 };
 
 const navigation: Array<{ id: View; label: string; icon: typeof MoonStar }> = [
@@ -49,26 +68,34 @@ export function MovieCompanionApp() {
   const [latestImport, setLatestImport] = useState<ImportSummary | null>(null);
   const [dataStatus, setDataStatus] =
     useState<LetterboxdDataStatus>(emptyDataStatus);
+  const [metadataStatus, setMetadataStatus] =
+    useState<MovieMetadataStatusSummary>(emptyMetadataStatus);
+  const [enrichmentProgress, setEnrichmentProgress] =
+    useState<MetadataEnrichmentProgress | null>(null);
   const [loading, setLoading] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const profile = useMemo(() => buildTasteProfile(library), [library]);
 
   const refreshLibrary = useCallback(async () => {
-    const [nextLibrary, nextImport, nextStatus] = await Promise.all([
-      getMovieLibrary(),
-      getLatestImport(),
-      getLetterboxdDataStatus(),
-    ]);
+    const [nextLibrary, nextImport, nextStatus, nextMetadataStatus] =
+      await Promise.all([
+        getMovieLibrary(),
+        getLatestImport(),
+        getLetterboxdDataStatus(),
+        getMovieMetadataStatus(),
+      ]);
     setLibrary(nextLibrary);
     setLatestImport(nextImport);
     setDataStatus(nextStatus);
+    setMetadataStatus(nextMetadataStatus);
     setLoading(false);
     if (process.env.NODE_ENV !== 'production') {
       console.debug('[Movie Companion] local state refreshed', {
         watched: nextLibrary.watched.length,
         watchlist: nextLibrary.watchlist.length,
         rated: nextStatus.sources.ratings?.count ?? 0,
+        metadata: nextMetadataStatus,
       });
     }
   }, []);
@@ -79,11 +106,13 @@ export function MovieCompanionApp() {
       getMovieLibrary(),
       getLatestImport(),
       getLetterboxdDataStatus(),
-    ]).then(([nextLibrary, nextImport, nextStatus]) => {
+      getMovieMetadataStatus(),
+    ]).then(([nextLibrary, nextImport, nextStatus, nextMetadataStatus]) => {
       if (cancelled) return;
       setLibrary(nextLibrary);
       setLatestImport(nextImport);
       setDataStatus(nextStatus);
+      setMetadataStatus(nextMetadataStatus);
       setLoading(false);
     });
 
@@ -113,8 +142,53 @@ export function MovieCompanionApp() {
     }
     await clearLocalMovieData();
     await refreshLibrary();
+    setEnrichmentProgress(null);
     setAnnouncement('Local Movie Companion data removed.');
     setView('tonight');
+  }
+
+  async function enrichMetadata(retryUnresolved = false) {
+    setEnrichmentProgress({
+      running: true,
+      processed: 0,
+      total: 0,
+      matched: metadataStatus.enriched,
+      unresolved: metadataStatus.unmatched + metadataStatus.ambiguous,
+      errors: metadataStatus.errors,
+      currentTitle: null,
+      message: null,
+    });
+    try {
+      const finalStatus = await enrichMovieMetadata({
+        retryUnresolved,
+        onProgress: (progress) => {
+          setEnrichmentProgress(progress);
+          if (progress.processed > 0 && progress.processed % 10 === 0) {
+            void refreshLibrary();
+          }
+        },
+      });
+      setMetadataStatus(finalStatus);
+      await refreshLibrary();
+      setAnnouncement(
+        `${finalStatus.enriched.toLocaleString()} of ${finalStatus.total.toLocaleString()} movies now have confirmed TMDB metadata.`,
+      );
+    } catch (error) {
+      const message =
+        error instanceof MetadataEnrichmentError
+          ? error.message
+          : 'Metadata enrichment stopped unexpectedly. You can safely resume it.';
+      setEnrichmentProgress({
+        running: false,
+        processed: 0,
+        total: 0,
+        matched: metadataStatus.enriched,
+        unresolved: metadataStatus.unmatched + metadataStatus.ambiguous,
+        errors: metadataStatus.errors,
+        currentTitle: null,
+        message,
+      });
+    }
   }
 
   function changeView(nextView: View) {
@@ -205,7 +279,12 @@ export function MovieCompanionApp() {
             library={library}
             latestImport={latestImport}
             dataStatus={dataStatus}
+            metadataStatus={metadataStatus}
+            enrichmentProgress={enrichmentProgress}
             onImport={() => setImportOpen(true)}
+            onEnrich={(retryUnresolved) =>
+              void enrichMetadata(retryUnresolved)
+            }
             onClear={() => void clearData()}
           />
         )}

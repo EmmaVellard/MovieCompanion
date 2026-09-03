@@ -13,11 +13,14 @@ The current local-first build includes:
 - IndexedDB persistence scoped to this browser and site origin;
 - searchable and sortable Watchlist, Taste, and Data views;
 - a deterministic Tonight picker that ranks only unwatched watchlist films and returns exactly three when at least three are available;
+- separate, inspectable taste and tonight-context scores, with strict runtime filtering;
 - explainable Safe, Risky, and Wildcard surprise strategies;
-- confidence-shrunk, sample-aware decade signals derived from real ratings;
+- confidence-shrunk, sample-aware decade and genre signals derived from real ratings;
+- resumable TMDB enrichment for posters, runtimes, genres, keywords, credits, language, country, and release metadata;
+- conservative title-and-year matching with explicit unmatched and ambiguous states;
 - a PWA manifest, install icons, standalone display settings, and a small offline app-shell cache.
 
-It intentionally does not include TMDB enrichment, authentication, cloud sync, or AI yet. Until metadata enrichment is added, mood, runtime, company, genre, and energy controls are saved as tonight's context but do not make unsupported claims or enforce missing metadata. The current ranking uses rating-derived decade affinity, release-year proximity to highly rated movies, evidence confidence, watchlist age, and deterministic tie-breaking.
+It intentionally does not include authentication, cloud sync, or AI. Recommendations combine a personal taste score with a separate tonight-context score. Mood, energy, and company use only confirmed TMDB genres, keywords, overview text, and runtime; runtime limits exclude films whose runtime is too long or still unknown.
 
 ## Run locally
 
@@ -26,8 +29,17 @@ Requirements: Node.js 22.13 or newer and npm.
 ```bash
 cd /Users/emma/Documents/Code/MovieCompanion
 npm install
+cp .env.example .env.local
 npm run dev
 ```
+
+Before starting the app, create a free TMDB API credential and put the API Read Access Token in `.env.local`:
+
+```bash
+TMDB_READ_ACCESS_TOKEN=your_token_here
+```
+
+The token is read only by the Next.js server route and is never included in browser JavaScript. If the token changes while the app is running, restart `npm run dev`.
 
 Open [http://localhost:3000](http://localhost:3000) in a browser. Stop the local server with `Control-C`.
 
@@ -48,9 +60,15 @@ npm run build
 
 Reimporting a data type replaces that type's prior local snapshot. Importing a watchlist file does not change anything in Letterboxd.
 
+## Enrich movie metadata
+
+After importing Letterboxd files, open **Data** and choose **Enrich missing metadata**. Each result is written to IndexedDB immediately, so closing the tab or losing the network does not discard completed matches. Run the same action again to resume errors or newly imported films. Low-confidence and duplicate-title matches are kept as **Unmatched** or **Ambiguous** rather than accepting a potentially incorrect poster; use **Retry unresolved matches** after correcting source data or improving matching rules.
+
+The server route sends only the movie title and year to TMDB. Ratings, watched dates, and the rest of each CSV stay in the browser. This product uses the TMDB API but is not endorsed or certified by TMDB.
+
 ## Privacy and persistence
 
-CSV contents are parsed in the browser and stored in IndexedDB. Nothing is uploaded by this milestone. Browser storage is origin-specific: localhost data, a future production deployment, and any second deployment domain each have separate libraries. Clearing site data removes the local library, so a backup/export feature should be added before this becomes the only convenient copy of any derived data.
+CSV contents are parsed in the browser and stored in IndexedDB. Metadata enrichment sends movie titles and years through the app's protected server route to TMDB; it does not send ratings or viewing history. Browser storage is origin-specific: localhost data, a future production deployment, and any second deployment domain each have separate libraries. Clearing site data removes the local library, so a backup/export feature should be added before this becomes the only convenient copy of any derived data.
 
 ## GitHub and deployment
 
@@ -66,5 +84,16 @@ git push -u origin main
 ```
 
 For Vercel, choose **Add New Project**, import the GitHub repository, and keep the detected Next.js defaults. Browser data is origin-specific, so the Vercel deployment will have its own local IndexedDB library and will require one Letterboxd import.
+
+Add `TMDB_READ_ACCESS_TOKEN` to the Vercel project's Environment Variables before deploying. Do not use a `NEXT_PUBLIC_` prefix: the credential must remain server-only.
+
+## Verify changes
+
+```bash
+npm test
+npm run lint
+npm run typecheck
+npm run build
+```
 
 See [docs/architecture.md](docs/architecture.md) for the proposed MVP boundaries and roadmap.

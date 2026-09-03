@@ -92,7 +92,7 @@ const surpriseModes = [
 
 const defaultContext: RecommendationContext = {
   moods: [],
-  runtimeLimit: 150,
+  runtimeLimit: null,
   watchingWith: 'alone',
   energy: 'normal',
 };
@@ -115,6 +115,9 @@ export function TonightView({
   const [recommendationHistory, setRecommendationHistory] = useState<string[]>(
     [],
   );
+  const [recommendationMessage, setRecommendationMessage] = useState<
+    string | null
+  >(null);
   const [runIndex, setRunIndex] = useState(0);
   const [detail, setDetail] = useState<MovieRecommendation | null>(null);
   const [picked, setPicked] = useState<MovieRecommendation | null>(null);
@@ -152,7 +155,7 @@ export function TonightView({
   function findMovies(avoidCurrent = false) {
     const excludedIds = avoidCurrent ? recommendationHistory : [];
     const nextRunIndex = runIndex + 1;
-    const next = recommendMovies({
+    const result = recommendMovies({
       library,
       profile,
       context,
@@ -160,10 +163,13 @@ export function TonightView({
       runIndex: nextRunIndex,
     });
     setRunIndex(nextRunIndex);
-    setRecommendations(next);
+    setRecommendations(result.recommendations);
+    setRecommendationMessage(result.diagnostics.message);
     setRecommendationHistory((current) => [
       ...current,
-      ...next.map((recommendation) => recommendation.movie.id),
+      ...result.recommendations.map(
+        (recommendation) => recommendation.movie.id,
+      ),
     ]);
     setSurprise(null);
     setSurpriseMessage(null);
@@ -294,9 +300,9 @@ export function TonightView({
 
           <div className="flex flex-col gap-3 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between">
             <p className="max-w-xl text-xs leading-5 text-muted-foreground">
-              Current scores use your ratings, release-year patterns, and
-              watchlist history. Mood and runtime become strict signals after
-              metadata enrichment.
+              Taste and tonight fit are scored separately. Runtime limits are
+              strict; movies with missing runtime are excluded until metadata
+              is available.
             </p>
             <Button
               size="lg"
@@ -313,6 +319,11 @@ export function TonightView({
               At least three unwatched watchlist films are needed to return
               three distinct recommendations.
             </p>
+          )}
+          {recommendationMessage && (
+            <output className="block rounded-xl border border-primary/20 bg-primary-muted/25 p-3 text-sm leading-6 text-muted-foreground">
+              {recommendationMessage}
+            </output>
           )}
         </div>
       </section>
@@ -556,7 +567,7 @@ function RecommendationCard({
       >
         <MovieArt
           title={recommendation.movie.title}
-          year={recommendation.movie.year}
+          posterUrl={recommendation.movie.posterUrl}
         />
       </button>
       <div className="p-5">
@@ -578,8 +589,10 @@ function RecommendationCard({
           </h3>
         </button>
         <p className="mt-2 text-xs text-muted-foreground">
-          {recommendation.movie.year ?? 'Year unknown'} · Runtime and genres
-          pending
+          {recommendation.movie.year ?? 'Year unknown'}
+          {recommendation.movie.metadata?.runtimeMinutes
+            ? ` · ${recommendation.movie.metadata.runtimeMinutes} min`
+            : ' · Runtime unknown'}
         </p>
         <ul className="mt-5 space-y-2.5">
           {recommendation.reasons.slice(0, 3).map((reason) => (
@@ -653,7 +666,7 @@ function RecommendationDialog({
             <div className="grid gap-5 sm:grid-cols-[140px_1fr]">
               <MovieArt
                 title={recommendation.movie.title}
-                year={recommendation.movie.year}
+                posterUrl={recommendation.movie.posterUrl}
               />
               <div>
                 <p className="text-sm font-medium">Why it surfaced</p>
@@ -671,10 +684,50 @@ function RecommendationDialog({
                     </li>
                   ))}
                 </ul>
-                <p className="mt-4 rounded-xl border border-border bg-background/45 p-3 text-xs leading-5 text-muted-foreground">
-                  Runtime, genres, director, cast, country, language, and poster
-                  are not available until TMDB enrichment.
-                </p>
+                {recommendation.movie.metadata?.status === 'matched' ? (
+                  <p className="mt-4 rounded-xl border border-border bg-background/45 p-3 text-xs leading-5 text-muted-foreground">
+                    {[
+                      recommendation.movie.metadata.genres.slice(0, 3).join(', '),
+                      recommendation.movie.metadata.runtimeMinutes
+                        ? `${recommendation.movie.metadata.runtimeMinutes} min`
+                        : null,
+                      recommendation.movie.metadata.director
+                        ? `Directed by ${recommendation.movie.metadata.director}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || 'TMDB metadata matched.'}
+                  </p>
+                ) : (
+                  <p className="mt-4 rounded-xl border border-border bg-background/45 p-3 text-xs leading-5 text-muted-foreground">
+                    Context matching is limited because this film does not yet
+                    have confirmed TMDB metadata.
+                  </p>
+                )}
+                {process.env.NODE_ENV !== 'production' && (
+                  <details className="mt-4 rounded-xl border border-border bg-background/45 p-3 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer font-medium text-foreground">
+                      Development score breakdown
+                    </summary>
+                    <p className="mt-3">
+                      Taste {Math.round(recommendation.signals.tasteScore * 100)}
+                      {' · '}Tonight{' '}
+                      {Math.round(recommendation.signals.tonightScore * 100)}
+                      {' · '}Final{' '}
+                      {Math.round(recommendation.signals.finalScore * 100)}
+                    </p>
+                    <ul className="mt-2 space-y-1.5">
+                      {recommendation.signals.contributions.map(
+                        (contribution, index) => (
+                          <li key={`${contribution.category}-${index}`}>
+                            {contribution.category}: +{contribution.points}{' '}
+                            {contribution.label}
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                  </details>
+                )}
               </div>
             </div>
             <DialogFooter className="-mx-5 -mb-5 sm:-mx-6 sm:-mb-6">

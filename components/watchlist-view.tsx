@@ -127,13 +127,20 @@ export function WatchlistView({
               key={movie.id}
               className="flex min-w-0 gap-3 rounded-2xl border border-border bg-card/75 p-3 transition-colors hover:border-primary/30"
             >
-              <MovieArt title={movie.title} year={movie.year} compact />
+              <MovieArt
+                title={movie.title}
+                posterUrl={movie.posterUrl}
+                compact
+              />
               <div className="flex min-w-0 flex-1 flex-col py-1">
                 <h2 className="line-clamp-2 text-sm leading-5 font-medium">
                   {movie.title}
                 </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {movie.year ?? 'Year unknown'}
+                  {movie.metadata?.runtimeMinutes
+                    ? ` · ${movie.metadata.runtimeMinutes} min`
+                    : ''}
                 </p>
                 {movie.addedDate && (
                   <p className="mt-1 text-[11px] text-muted-foreground/75">

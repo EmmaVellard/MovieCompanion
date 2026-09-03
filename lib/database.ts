@@ -5,9 +5,13 @@ import type {
   ImportSummary,
   LetterboxdDataStatus,
   LetterboxdFileKind,
+  MetadataMovieInput,
+  MovieMetadata,
+  MovieMetadataStatusSummary,
   MovieLibrary,
   PreparedImportFile,
   SourceMovieRecord,
+  TmdbImageConfiguration,
   WatchedMovie,
   WatchlistMovie,
 } from '@/lib/types';
@@ -23,6 +27,15 @@ interface MovieCompanionDatabase extends DBSchema {
     value: ImportSummary;
     indexes: { importedAt: string };
   };
+  movieMetadata: {
+    key: string;
+    value: MovieMetadata;
+    indexes: { status: MovieMetadata['status'] };
+  };
+  tmdbConfiguration: {
+    key: string;
+    value: TmdbImageConfiguration;
+  };
 }
 
 let database: ReturnType<typeof openDB<MovieCompanionDatabase>> | null = null;
@@ -34,15 +47,27 @@ function debugImport(event: string, details: Record<string, unknown>) {
 }
 
 function getDatabase() {
-  database ??= openDB<MovieCompanionDatabase>('movie-companion', 1, {
+  database ??= openDB<MovieCompanionDatabase>('movie-companion', 2, {
     upgrade(db) {
-      const sourceMovies = db.createObjectStore('sourceMovies', {
-        keyPath: 'key',
-      });
-      sourceMovies.createIndex('kind', 'kind');
-
-      const imports = db.createObjectStore('imports', { keyPath: 'id' });
-      imports.createIndex('importedAt', 'importedAt');
+      if (!db.objectStoreNames.contains('sourceMovies')) {
+        const sourceMovies = db.createObjectStore('sourceMovies', {
+          keyPath: 'key',
+        });
+        sourceMovies.createIndex('kind', 'kind');
+      }
+      if (!db.objectStoreNames.contains('imports')) {
+        const imports = db.createObjectStore('imports', { keyPath: 'id' });
+        imports.createIndex('importedAt', 'importedAt');
+      }
+      if (!db.objectStoreNames.contains('movieMetadata')) {
+        const metadata = db.createObjectStore('movieMetadata', {
+          keyPath: 'movieKey',
+        });
+        metadata.createIndex('status', 'status');
+      }
+      if (!db.objectStoreNames.contains('tmdbConfiguration')) {
+        db.createObjectStore('tmdbConfiguration', { keyPath: 'id' });
+      }
     },
   });
   return database;
@@ -134,11 +159,30 @@ export async function importLetterboxdFiles(files: PreparedImportFile[]) {
 
 export async function getMovieLibrary(): Promise<MovieLibrary> {
   const db = await getDatabase();
-  const records = await db.getAll('sourceMovies');
+  const [records, metadataRecords, tmdbImageConfiguration] = await Promise.all([
+    db.getAll('sourceMovies'),
+    db.getAll('movieMetadata'),
+    db.get('tmdbConfiguration', 'tmdb'),
+  ]);
+  const metadataByMovie = new Map(
+    metadataRecords.map((metadata) => [metadata.movieKey, metadata]),
+  );
   const watchedByMovie = new Map<string, WatchedMovie>();
   const watchlist: WatchlistMovie[] = [];
 
+  function displayMetadata(movieKey: string) {
+    const metadata = metadataByMovie.get(movieKey) ?? null;
+    const posterUrl =
+      metadata?.status === 'matched' &&
+      metadata.posterPath &&
+      tmdbImageConfiguration
+        ? `${tmdbImageConfiguration.secureBaseUrl}${tmdbImageConfiguration.posterSize}${metadata.posterPath}`
+        : null;
+    return { metadata, posterUrl };
+  }
+
   for (const record of records) {
+    const display = displayMetadata(record.movieKey);
     if (record.kind === 'watchlist') {
       watchlist.push({
         id: record.movieKey,
@@ -146,6 +190,7 @@ export async function getMovieLibrary(): Promise<MovieLibrary> {
         year: record.year,
         letterboxdUri: record.letterboxdUri,
         addedDate: record.date,
+        ...display,
       });
       continue;
     }
@@ -164,13 +209,104 @@ export async function getMovieLibrary(): Promise<MovieLibrary> {
           ? record.date
           : (current?.watchedDate ?? null),
       sources: [...new Set([...(current?.sources ?? []), source])],
+      ...display,
     });
   }
 
   return {
     watched: [...watchedByMovie.values()].sort(compareMovies),
     watchlist: watchlist.sort(compareMovies),
+    tmdbImageConfiguration: tmdbImageConfiguration ?? null,
   };
+}
+
+function uniqueMovieInputs(records: SourceMovieRecord[]) {
+  const movies = new Map<string, MetadataMovieInput>();
+  for (const record of records) {
+    const current = movies.get(record.movieKey);
+    movies.set(record.movieKey, {
+      movieKey: record.movieKey,
+      title: record.title || current?.title || 'Untitled',
+      year: record.year ?? current?.year ?? null,
+    });
+  }
+  return [...movies.values()].sort(compareMovies);
+}
+
+export async function getMovieMetadataStatus(): Promise<MovieMetadataStatusSummary> {
+  const db = await getDatabase();
+  const [records, metadataRecords] = await Promise.all([
+    db.getAll('sourceMovies'),
+    db.getAll('movieMetadata'),
+  ]);
+  const currentKeys = new Set(
+    records.map((record) => record.movieKey),
+  );
+  const metadataByMovie = new Map(
+    metadataRecords
+      .filter((metadata) => currentKeys.has(metadata.movieKey))
+      .map((metadata) => [metadata.movieKey, metadata]),
+  );
+  const summary: MovieMetadataStatusSummary = {
+    total: currentKeys.size,
+    enriched: 0,
+    unmatched: 0,
+    ambiguous: 0,
+    errors: 0,
+    missing: 0,
+  };
+
+  for (const movieKey of currentKeys) {
+    const metadata = metadataByMovie.get(movieKey);
+    if (!metadata) summary.missing += 1;
+    else if (metadata.status === 'matched') summary.enriched += 1;
+    else if (metadata.status === 'unmatched') summary.unmatched += 1;
+    else if (metadata.status === 'ambiguous') summary.ambiguous += 1;
+    else summary.errors += 1;
+  }
+  return summary;
+}
+
+export async function getMoviesNeedingMetadata({
+  retryUnresolved = false,
+}: {
+  retryUnresolved?: boolean;
+} = {}): Promise<MetadataMovieInput[]> {
+  const db = await getDatabase();
+  const [records, metadataRecords] = await Promise.all([
+    db.getAll('sourceMovies'),
+    db.getAll('movieMetadata'),
+  ]);
+  const metadataByMovie = new Map(
+    metadataRecords.map((metadata) => [metadata.movieKey, metadata]),
+  );
+
+  return uniqueMovieInputs(records)
+    .filter((movie) => {
+      const metadata = metadataByMovie.get(movie.movieKey);
+      if (!metadata || metadata.status === 'error') return true;
+      return retryUnresolved && metadata.status !== 'matched';
+    })
+    .map((movie) => ({
+      ...movie,
+      existingStatus: metadataByMovie.get(movie.movieKey)?.status ?? null,
+    }));
+}
+
+export async function saveMovieMetadata(
+  metadata: MovieMetadata,
+  configuration?: TmdbImageConfiguration | null,
+) {
+  const db = await getDatabase();
+  const stores: Array<'movieMetadata' | 'tmdbConfiguration'> = configuration
+    ? ['movieMetadata', 'tmdbConfiguration']
+    : ['movieMetadata'];
+  const transaction = db.transaction(stores, 'readwrite');
+  await transaction.objectStore('movieMetadata').put(metadata);
+  if (configuration) {
+    await transaction.objectStore('tmdbConfiguration').put(configuration);
+  }
+  await transaction.done;
 }
 
 export async function getLatestImport() {
@@ -214,10 +350,15 @@ export async function getLetterboxdDataStatus(): Promise<LetterboxdDataStatus> {
 
 export async function clearLocalMovieData() {
   const db = await getDatabase();
-  const transaction = db.transaction(['sourceMovies', 'imports'], 'readwrite');
+  const transaction = db.transaction(
+    ['sourceMovies', 'imports', 'movieMetadata', 'tmdbConfiguration'],
+    'readwrite',
+  );
   await Promise.all([
     transaction.objectStore('sourceMovies').clear(),
     transaction.objectStore('imports').clear(),
+    transaction.objectStore('movieMetadata').clear(),
+    transaction.objectStore('tmdbConfiguration').clear(),
   ]);
   await transaction.done;
 }

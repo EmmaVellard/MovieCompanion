@@ -1,56 +1,65 @@
+'use client';
+
+import { useState } from 'react';
 import { Film } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
 export function MovieArt({
   title,
-  year,
+  posterUrl,
   compact = false,
 }: {
   title: string;
-  year: number | null;
+  posterUrl: string | null;
   compact?: boolean;
 }) {
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
+  const loaded = Boolean(posterUrl) && loadedUrl === posterUrl;
+  const showPoster = Boolean(posterUrl) && brokenUrl !== posterUrl;
+
   return (
     <div
-      aria-label={`Poster unavailable for ${title}`}
+      aria-label={showPoster ? undefined : `Poster unavailable for ${title}`}
       className={cn(
-        'relative isolate overflow-hidden border border-white/10 bg-card shadow-[0_22px_50px_rgba(0,0,0,0.38)]',
-        compact
-          ? 'h-20 w-14 shrink-0 rounded-xl'
-          : 'aspect-[2/3] w-full rounded-[1.35rem]',
+        'relative isolate aspect-[2/3] overflow-hidden border border-white/10 bg-[linear-gradient(145deg,oklch(0.235_0.012_270),oklch(0.15_0.012_270))] shadow-[0_22px_50px_rgba(0,0,0,0.38)]',
+        compact ? 'w-14 shrink-0 rounded-xl' : 'w-full rounded-[1.35rem]',
       )}
-      style={{
-        backgroundImage:
-          'linear-gradient(150deg, var(--gradient-accent-start), var(--gradient-accent-end))',
-      }}
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_18%,rgba(255,255,255,0.22),transparent_30%),linear-gradient(to_top,rgba(8,7,12,0.88),transparent_62%)]" />
-      <Film
-        className={cn(
-          'absolute text-white/22',
-          compact ? '-right-2 top-2 size-12' : '-right-5 top-5 size-28',
-        )}
-        strokeWidth={1.2}
-        aria-hidden="true"
-      />
-      <div
-        className={cn('absolute inset-x-0 bottom-0', compact ? 'p-2' : 'p-5')}
-      >
-        {!compact && (
-          <p className="line-clamp-3 text-xl leading-tight font-semibold tracking-[-0.035em] text-white">
-            {title}
-          </p>
-        )}
-        <p
+      {!loaded && showPoster && (
+        <div className="absolute inset-0 animate-pulse bg-[linear-gradient(110deg,transparent_20%,rgba(255,255,255,0.06)_45%,transparent_70%)] bg-[length:220%_100%]" />
+      )}
+      {showPoster ? (
+        // The URL is built from TMDB's trusted image configuration and stored poster path.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={posterUrl ?? undefined}
+          alt={`${title} poster`}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
           className={cn(
-            'font-medium text-white/70',
-            compact ? 'text-[10px]' : 'mt-2 text-xs',
+            'absolute inset-0 size-full object-cover transition-opacity duration-300',
+            loaded ? 'opacity-100' : 'opacity-0',
           )}
-        >
-          {year ?? 'Year unknown'}
-        </p>
-      </div>
+          onLoad={() => setLoadedUrl(posterUrl)}
+          onError={() => setBrokenUrl(posterUrl)}
+        />
+      ) : (
+        <div className="absolute inset-0 grid place-items-center">
+          <div className="grid size-12 place-items-center rounded-full border border-white/8 bg-white/[0.035]">
+            <Film
+              className={cn(
+                'text-white/28',
+                compact ? 'size-4' : 'size-5',
+              )}
+              strokeWidth={1.4}
+              aria-hidden="true"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

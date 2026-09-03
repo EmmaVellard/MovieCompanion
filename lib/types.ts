@@ -30,6 +30,68 @@ export interface SourceMovieRecord extends ImportedMovieRow {
   sourceFileName: string;
 }
 
+export type MovieMetadataStatus =
+  | 'matched'
+  | 'unmatched'
+  | 'ambiguous'
+  | 'error';
+
+export interface MovieMetadataCandidate {
+  tmdbId: number;
+  title: string;
+  originalTitle: string;
+  year: number | null;
+  confidence: number;
+}
+
+export interface MovieMetadata {
+  movieKey: string;
+  provider: 'tmdb';
+  status: MovieMetadataStatus;
+  tmdbId: number | null;
+  matchedTitle: string | null;
+  matchedYear: number | null;
+  confidence: number | null;
+  posterPath: string | null;
+  backdropPath: string | null;
+  runtimeMinutes: number | null;
+  genres: string[];
+  overview: string;
+  originalLanguage: string | null;
+  releaseDate: string | null;
+  productionCountries: string[];
+  keywords: string[];
+  director: string | null;
+  cast: string[];
+  candidates: MovieMetadataCandidate[];
+  attemptedAt: string;
+  error: string | null;
+}
+
+export interface TmdbImageConfiguration {
+  id: 'tmdb';
+  secureBaseUrl: string;
+  posterSize: string;
+  backdropSize: string;
+  fetchedAt: string;
+}
+
+export interface MovieMetadataStatusSummary {
+  total: number;
+  enriched: number;
+  unmatched: number;
+  ambiguous: number;
+  errors: number;
+  missing: number;
+}
+
+export interface MetadataMovieInput {
+  movieKey: string;
+  title: string;
+  year: number | null;
+  existingStatus?: MovieMetadataStatus | null;
+}
+
 export interface WatchedMovie {
   id: string;
   title: string;
@@ -38,6 +100,8 @@ export interface WatchedMovie {
   rating: number | null;
   watchedDate: string | null;
   sources: Array<'ratings' | 'watched'>;
+  metadata: MovieMetadata | null;
+  posterUrl: string | null;
 }
 
 export interface WatchlistMovie {
@@ -46,11 +110,14 @@ export interface WatchlistMovie {
   year: number | null;
   letterboxdUri: string | null;
   addedDate: string | null;
+  metadata: MovieMetadata | null;
+  posterUrl: string | null;
 }
 
 export interface MovieLibrary {
   watched: WatchedMovie[];
   watchlist: WatchlistMovie[];
+  tmdbImageConfiguration: TmdbImageConfiguration | null;
 }
 
 export interface ImportSummary {
@@ -98,6 +165,7 @@ export interface TasteProfile {
   ratedMovieCount: number;
   overallAverage: number | null;
   decades: TasteStat[];
+  genres: TasteStat[];
   strongestDecades: TasteStat[];
   weakestDecades: TasteStat[];
   averageRatedYear: number | null;
@@ -106,6 +174,7 @@ export interface TasteProfile {
     title: string;
     year: number | null;
     rating: number;
+    genres: string[];
   }>;
   metadataCoverage: {
     genres: boolean;
@@ -152,6 +221,18 @@ export interface RecommendationSignals {
   yearSimilarity: number;
   watchlistAge: number;
   habitDistance: number;
+  genreAffinity: number;
+  metadataSimilarity: number;
+  tasteScore: number;
+  tonightScore: number;
+  finalScore: number;
+  contributions: RecommendationContribution[];
+}
+
+export interface RecommendationContribution {
+  category: 'taste' | 'mood' | 'runtime' | 'energy' | 'company' | 'priority';
+  label: string;
+  points: number;
 }
 
 export interface MovieRecommendation {
@@ -161,4 +242,29 @@ export interface MovieRecommendation {
   reasons: string[];
   signals: RecommendationSignals;
   limitedMetadata: boolean;
+}
+
+export interface RecommendationDiagnostics {
+  watchlistCandidates: number;
+  excludedWatched: number;
+  excludedByRuntime: number;
+  excludedMissingRuntime: number;
+  eligibleAfterFilters: number;
+  message: string | null;
+}
+
+export interface RecommendationResult {
+  recommendations: MovieRecommendation[];
+  diagnostics: RecommendationDiagnostics;
+}
+
+export interface MetadataEnrichmentProgress {
+  running: boolean;
+  processed: number;
+  total: number;
+  matched: number;
+  unresolved: number;
+  errors: number;
+  currentTitle: string | null;
+  message: string | null;
 }
