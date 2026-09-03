@@ -17,10 +17,13 @@ import { TonightView } from '@/components/tonight-view';
 import { WatchlistView } from '@/components/watchlist-view';
 import {
   clearLocalMovieData,
+  clearTmdbReadAccessToken,
   getLetterboxdDataStatus,
   getLatestImport,
   getMovieMetadataStatus,
   getMovieLibrary,
+  hasTmdbReadAccessToken,
+  saveTmdbReadAccessToken,
 } from '@/lib/database';
 import { buildTasteProfile } from '@/lib/taste-profile';
 import {
@@ -70,6 +73,8 @@ export function MovieCompanionApp() {
     useState<LetterboxdDataStatus>(emptyDataStatus);
   const [metadataStatus, setMetadataStatus] =
     useState<MovieMetadataStatusSummary>(emptyMetadataStatus);
+  const [tmdbCredentialConfigured, setTmdbCredentialConfigured] =
+    useState(false);
   const [enrichmentProgress, setEnrichmentProgress] =
     useState<MetadataEnrichmentProgress | null>(null);
   const [loading, setLoading] = useState(true);
@@ -78,17 +83,24 @@ export function MovieCompanionApp() {
   const profile = useMemo(() => buildTasteProfile(library), [library]);
 
   const refreshLibrary = useCallback(async () => {
-    const [nextLibrary, nextImport, nextStatus, nextMetadataStatus] =
-      await Promise.all([
-        getMovieLibrary(),
-        getLatestImport(),
-        getLetterboxdDataStatus(),
-        getMovieMetadataStatus(),
-      ]);
+    const [
+      nextLibrary,
+      nextImport,
+      nextStatus,
+      nextMetadataStatus,
+      hasTmdbCredential,
+    ] = await Promise.all([
+      getMovieLibrary(),
+      getLatestImport(),
+      getLetterboxdDataStatus(),
+      getMovieMetadataStatus(),
+      hasTmdbReadAccessToken(),
+    ]);
     setLibrary(nextLibrary);
     setLatestImport(nextImport);
     setDataStatus(nextStatus);
     setMetadataStatus(nextMetadataStatus);
+    setTmdbCredentialConfigured(hasTmdbCredential);
     setLoading(false);
     if (process.env.NODE_ENV !== 'production') {
       console.debug('[Movie Companion] local state refreshed', {
@@ -107,14 +119,24 @@ export function MovieCompanionApp() {
       getLatestImport(),
       getLetterboxdDataStatus(),
       getMovieMetadataStatus(),
-    ]).then(([nextLibrary, nextImport, nextStatus, nextMetadataStatus]) => {
-      if (cancelled) return;
-      setLibrary(nextLibrary);
-      setLatestImport(nextImport);
-      setDataStatus(nextStatus);
-      setMetadataStatus(nextMetadataStatus);
-      setLoading(false);
-    });
+      hasTmdbReadAccessToken(),
+    ]).then(
+      ([
+        nextLibrary,
+        nextImport,
+        nextStatus,
+        nextMetadataStatus,
+        hasTmdbCredential,
+      ]) => {
+        if (cancelled) return;
+        setLibrary(nextLibrary);
+        setLatestImport(nextImport);
+        setDataStatus(nextStatus);
+        setMetadataStatus(nextMetadataStatus);
+        setTmdbCredentialConfigured(hasTmdbCredential);
+        setLoading(false);
+      },
+    );
 
     return () => {
       cancelled = true;
@@ -145,6 +167,18 @@ export function MovieCompanionApp() {
     setEnrichmentProgress(null);
     setAnnouncement('Local Movie Companion data removed.');
     setView('tonight');
+  }
+
+  async function saveTmdbCredential(readAccessToken: string) {
+    await saveTmdbReadAccessToken(readAccessToken);
+    setTmdbCredentialConfigured(true);
+    setAnnouncement('TMDB access saved on this device.');
+  }
+
+  async function removeTmdbCredential() {
+    await clearTmdbReadAccessToken();
+    setTmdbCredentialConfigured(false);
+    setAnnouncement('TMDB access removed from this device.');
   }
 
   async function enrichMetadata(retryUnresolved = false) {
@@ -282,10 +316,11 @@ export function MovieCompanionApp() {
             dataStatus={dataStatus}
             metadataStatus={metadataStatus}
             enrichmentProgress={enrichmentProgress}
+            tmdbCredentialConfigured={tmdbCredentialConfigured}
             onImport={() => setImportOpen(true)}
-            onEnrich={(retryUnresolved) =>
-              void enrichMetadata(retryUnresolved)
-            }
+            onEnrich={(retryUnresolved) => void enrichMetadata(retryUnresolved)}
+            onSaveTmdbCredential={saveTmdbCredential}
+            onClearTmdbCredential={removeTmdbCredential}
             onClear={() => void clearData()}
           />
         )}

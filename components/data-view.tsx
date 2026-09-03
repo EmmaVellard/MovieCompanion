@@ -1,6 +1,10 @@
+'use client';
+
+import { useState } from 'react';
 import {
   ExternalLink,
   Images,
+  KeyRound,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -36,6 +40,9 @@ export function DataView({
   enrichmentProgress,
   onImport,
   onEnrich,
+  tmdbCredentialConfigured,
+  onSaveTmdbCredential,
+  onClearTmdbCredential,
   onClear,
 }: {
   library: MovieLibrary;
@@ -45,8 +52,16 @@ export function DataView({
   enrichmentProgress: MetadataEnrichmentProgress | null;
   onImport: () => void;
   onEnrich: (retryUnresolved: boolean) => void;
+  tmdbCredentialConfigured: boolean;
+  onSaveTmdbCredential: (readAccessToken: string) => Promise<void>;
+  onClearTmdbCredential: () => Promise<void>;
   onClear: () => void;
 }) {
+  const [credential, setCredential] = useState('');
+  const [credentialMessage, setCredentialMessage] = useState<string | null>(
+    null,
+  );
+  const [savingCredential, setSavingCredential] = useState(false);
   const hasData = library.watchlist.length + library.watched.length > 0;
   const enrichmentRunning = enrichmentProgress?.running ?? false;
   const enrichmentPercent = enrichmentProgress?.total
@@ -55,6 +70,25 @@ export function DataView({
       )
     : 0;
   const unresolved = metadataStatus.unmatched + metadataStatus.ambiguous;
+
+  async function saveCredential(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSavingCredential(true);
+    setCredentialMessage(null);
+    try {
+      await onSaveTmdbCredential(credential);
+      setCredential('');
+      setCredentialMessage('TMDB credential saved on this device.');
+    } catch (error) {
+      setCredentialMessage(
+        error instanceof Error
+          ? error.message
+          : 'The TMDB credential could not be saved.',
+      );
+    } finally {
+      setSavingCredential(false);
+    }
+  }
 
   return (
     <section className="mx-auto max-w-3xl">
@@ -157,6 +191,90 @@ export function DataView({
         </article>
 
         <article className="rounded-[2rem] border border-border bg-card p-5 sm:p-6">
+          <div className="flex items-start gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-muted text-primary">
+              <KeyRound className="size-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-medium">TMDB access</h2>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    Required to fetch posters and movie details from this static
+                    GitHub Pages app.
+                  </p>
+                </div>
+                <span className="rounded-full border border-border bg-background/45 px-2.5 py-1 text-xs text-muted-foreground">
+                  {tmdbCredentialConfigured
+                    ? '✓ Saved locally'
+                    : '○ Not configured'}
+                </span>
+              </div>
+
+              <form className="mt-5" onSubmit={saveCredential}>
+                <label
+                  htmlFor="tmdb-read-token"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  API Read Access Token
+                </label>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    id="tmdb-read-token"
+                    type="password"
+                    value={credential}
+                    onChange={(event) => setCredential(event.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={
+                      tmdbCredentialConfigured
+                        ? 'Enter a replacement token'
+                        : 'Paste your TMDB read token'
+                    }
+                    className="min-h-11 min-w-0 flex-1 rounded-xl border border-border bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/50 focus:ring-3 focus:ring-ring/35"
+                  />
+                  <Button
+                    type="submit"
+                    className="h-11 rounded-xl"
+                    disabled={
+                      savingCredential || credential.trim().length === 0
+                    }
+                  >
+                    {savingCredential
+                      ? 'Saving…'
+                      : tmdbCredentialConfigured
+                        ? 'Replace token'
+                        : 'Save token'}
+                  </Button>
+                </div>
+              </form>
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Stored in IndexedDB for this site only. It is sent directly to
+                  api.themoviedb.org and is never uploaded to GitHub.
+                </p>
+                {tmdbCredentialConfigured && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-9 rounded-lg px-3 text-xs text-muted-foreground"
+                    onClick={() => void onClearTmdbCredential()}
+                  >
+                    Remove token
+                  </Button>
+                )}
+              </div>
+              {credentialMessage && (
+                <output className="mt-3 block text-xs text-muted-foreground">
+                  {credentialMessage}
+                </output>
+              )}
+            </div>
+          </div>
+        </article>
+
+        <article className="rounded-[2rem] border border-border bg-card p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-3">
               <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-muted text-primary">
@@ -171,7 +289,9 @@ export function DataView({
             </div>
             <Button
               className="h-11 rounded-xl"
-              disabled={!hasData || enrichmentRunning}
+              disabled={
+                !hasData || enrichmentRunning || !tmdbCredentialConfigured
+              }
               onClick={() => onEnrich(false)}
             >
               <RefreshCw
@@ -238,6 +358,7 @@ export function DataView({
               <Button
                 variant="ghost"
                 className="mt-3 h-10 rounded-xl px-3 text-xs text-muted-foreground"
+                disabled={!tmdbCredentialConfigured}
                 onClick={() => onEnrich(true)}
               >
                 Retry {unresolved.toLocaleString()} unresolved{' '}
@@ -251,6 +372,12 @@ export function DataView({
             interrupted run can resume. A conservative title-and-year match is
             kept unresolved instead of risking a wrong poster.
           </p>
+          {!tmdbCredentialConfigured && (
+            <p className="mt-3 rounded-xl border border-border bg-background/45 p-3 text-xs leading-5 text-muted-foreground">
+              Save your TMDB API Read Access Token above to enable metadata
+              enrichment.
+            </p>
+          )}
           <div className="mt-4 border-t border-border pt-4">
             <a
               href="https://www.themoviedb.org"
@@ -262,7 +389,7 @@ export function DataView({
               {/* Official, unmodified TMDB short logo from its attribution page. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src="/tmdb-logo.svg"
+                src={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/tmdb-logo.svg`}
                 alt="TMDB"
                 width="137"
                 height="18"
@@ -270,8 +397,8 @@ export function DataView({
               />
             </a>
             <p className="mt-2 text-[11px] leading-5 text-muted-foreground/75">
-              This product uses the TMDB API but is not endorsed or certified
-              by TMDB.
+              This product uses the TMDB API but is not endorsed or certified by
+              TMDB.
             </p>
           </div>
         </article>
@@ -285,8 +412,9 @@ export function DataView({
               <h2 className="font-medium">Privacy boundary</h2>
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
                 CSV contents, ratings, and watched dates stay in this browser.
-                During metadata enrichment, only a movie title and year are
-                sent through the app&apos;s server route to TMDB.
+                During metadata enrichment, the saved credential plus a movie
+                title and year are sent directly to TMDB. Ratings and watched
+                dates never leave this browser.
               </p>
             </div>
           </div>

@@ -12,6 +12,7 @@ import type {
   PreparedImportFile,
   SourceMovieRecord,
   TmdbImageConfiguration,
+  TmdbCredentialSettings,
   WatchedMovie,
   WatchlistMovie,
 } from '@/lib/types';
@@ -36,6 +37,10 @@ interface MovieCompanionDatabase extends DBSchema {
     key: string;
     value: TmdbImageConfiguration;
   };
+  appSettings: {
+    key: string;
+    value: TmdbCredentialSettings;
+  };
 }
 
 let database: ReturnType<typeof openDB<MovieCompanionDatabase>> | null = null;
@@ -47,7 +52,7 @@ function debugImport(event: string, details: Record<string, unknown>) {
 }
 
 function getDatabase() {
-  database ??= openDB<MovieCompanionDatabase>('movie-companion', 2, {
+  database ??= openDB<MovieCompanionDatabase>('movie-companion', 3, {
     upgrade(db) {
       if (!db.objectStoreNames.contains('sourceMovies')) {
         const sourceMovies = db.createObjectStore('sourceMovies', {
@@ -67,6 +72,9 @@ function getDatabase() {
       }
       if (!db.objectStoreNames.contains('tmdbConfiguration')) {
         db.createObjectStore('tmdbConfiguration', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('appSettings')) {
+        db.createObjectStore('appSettings', { keyPath: 'id' });
       }
     },
   });
@@ -239,9 +247,7 @@ export async function getMovieMetadataStatus(): Promise<MovieMetadataStatusSumma
     db.getAll('sourceMovies'),
     db.getAll('movieMetadata'),
   ]);
-  const currentKeys = new Set(
-    records.map((record) => record.movieKey),
-  );
+  const currentKeys = new Set(records.map((record) => record.movieKey));
   const metadataByMovie = new Map(
     metadataRecords
       .filter((metadata) => currentKeys.has(metadata.movieKey))
@@ -315,6 +321,34 @@ export async function getLatestImport() {
   return imports.at(-1) ?? null;
 }
 
+export async function getTmdbReadAccessToken() {
+  const db = await getDatabase();
+  const settings = await db.get('appSettings', 'tmdb-credential');
+  return settings?.readAccessToken ?? null;
+}
+
+export async function hasTmdbReadAccessToken() {
+  return Boolean(await getTmdbReadAccessToken());
+}
+
+export async function saveTmdbReadAccessToken(readAccessToken: string) {
+  const normalized = readAccessToken.trim();
+  if (normalized.length < 20) {
+    throw new Error('Enter a valid TMDB API Read Access Token.');
+  }
+  const db = await getDatabase();
+  await db.put('appSettings', {
+    id: 'tmdb-credential',
+    readAccessToken: normalized,
+    savedAt: new Date().toISOString(),
+  });
+}
+
+export async function clearTmdbReadAccessToken() {
+  const db = await getDatabase();
+  await db.delete('appSettings', 'tmdb-credential');
+}
+
 export async function getLetterboxdDataStatus(): Promise<LetterboxdDataStatus> {
   const db = await getDatabase();
   const records = await db.getAll('sourceMovies');
@@ -351,7 +385,13 @@ export async function getLetterboxdDataStatus(): Promise<LetterboxdDataStatus> {
 export async function clearLocalMovieData() {
   const db = await getDatabase();
   const transaction = db.transaction(
-    ['sourceMovies', 'imports', 'movieMetadata', 'tmdbConfiguration'],
+    [
+      'sourceMovies',
+      'imports',
+      'movieMetadata',
+      'tmdbConfiguration',
+      'appSettings',
+    ],
     'readwrite',
   );
   await Promise.all([
@@ -359,6 +399,7 @@ export async function clearLocalMovieData() {
     transaction.objectStore('imports').clear(),
     transaction.objectStore('movieMetadata').clear(),
     transaction.objectStore('tmdbConfiguration').clear(),
+    transaction.objectStore('appSettings').clear(),
   ]);
   await transaction.done;
 }

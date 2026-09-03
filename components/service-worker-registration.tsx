@@ -32,7 +32,9 @@ export function ServiceWorkerRegistration() {
     }
 
     const register = () => {
-      void navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+      const scope = `${basePath}/`;
+      void navigator.serviceWorker.register(`${basePath}/sw.js`, { scope });
     };
 
     if (document.readyState === 'complete') {

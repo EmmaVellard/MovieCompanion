@@ -17,7 +17,10 @@ Keep the app as one responsive web application with four visible areas:
 
 Watched data remains secondary and appears as a source count in Data rather than becoming a top-level destination.
 
-The MVP needs no account or general-purpose backend. IndexedDB stores imported source snapshots, resolved movie identities, TMDB metadata, and derived caches. A single server route is justified in Phase 2 solely to protect the TMDB credential.
+The MVP needs no account or backend. IndexedDB stores imported source snapshots,
+resolved movie identities, TMDB metadata, the device-local TMDB credential, and
+derived caches. This allows the complete app to remain a GitHub Pages static
+export.
 
 ## Data model
 
@@ -102,10 +105,12 @@ The shrunk delta is the useful value for recommendation scoring. A category with
 
 ## Metadata boundary
 
-The app has one same-origin route that reads `TMDB_READ_ACCESS_TOKEN` from
-server-only configuration. The browser sends a movie title and year; the route
-calls TMDB and returns only the required response fields. Ratings, watched
-dates, and the full taste profile never leave the device.
+GitHub Pages cannot run a protected server route. Each browser therefore stores
+its own TMDB API Read Access Token in IndexedDB and sends it directly to TMDB
+with movie titles and years during enrichment. The token is never committed to
+GitHub. Ratings, watched dates, and the full taste profile never leave the
+device. This is suitable for a small personal tool; a broadly shared service
+would need a separately hosted authenticated proxy instead.
 
 Matching should be explicit:
 
@@ -171,7 +176,9 @@ app startup or recommendations.
 1. **Foundation — complete**: responsive shell, CSV import, validation, IndexedDB, Watchlist view, and PWA basics.
 2. **Interactive personal picker — complete**: Tonight controls, deterministic watchlist-only ranking, three explainable results, repeat suppression, sample-aware decade Taste view, and distinct Safe/Risky/Wildcard objectives.
 3. **Import hardening**: real export fixtures supplied by the user, ZIP convenience import, local JSON backup/restore, and migration tests.
-4. **TMDB matching — complete baseline**: protected route, resumable enrichment, cache, progress, conservative ambiguity handling, and poster rendering.
+4. **TMDB matching — complete baseline**: device-local credential, direct TMDB
+   requests, resumable enrichment, cache, progress, conservative ambiguity
+   handling, and poster rendering.
 5. **Metadata-backed Taste and Tonight — in progress**: genre taste, runtime, moods, energy, and company now affect scoring. Country, language, director, and deeper interaction statistics remain later work.
 6. **Only then**: embeddings, natural-language parsing, interaction effects, and optional cross-device sync.
 

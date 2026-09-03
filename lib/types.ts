@@ -76,6 +76,12 @@ export interface TmdbImageConfiguration {
   fetchedAt: string;
 }
 
+export interface TmdbCredentialSettings {
+  id: 'tmdb-credential';
+  readAccessToken: string;
+  savedAt: string;
+}
+
 export interface MovieMetadataStatusSummary {
   total: number;
   enriched: number;

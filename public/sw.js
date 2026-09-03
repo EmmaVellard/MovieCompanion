@@ -1,5 +1,11 @@
-const CACHE_NAME = 'movie-companion-shell-v2';
-const APP_SHELL = ['/', '/favicon.svg', '/icon-192.png', '/icon-512.png'];
+const CACHE_NAME = 'movie-companion-shell-v3';
+const APP_ROOT = new URL('./', self.registration.scope).href;
+const APP_SHELL = [
+  APP_ROOT,
+  new URL('favicon.svg', APP_ROOT).href,
+  new URL('icon-192.png', APP_ROOT).href,
+  new URL('icon-512.png', APP_ROOT).href,
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -35,10 +41,12 @@ self.addEventListener('fetch', (event) => {
       fetch(request)
         .then((response) => {
           const copy = response.clone();
-          void caches.open(CACHE_NAME).then((cache) => cache.put('/', copy));
+          void caches
+            .open(CACHE_NAME)
+            .then((cache) => cache.put(APP_ROOT, copy));
           return response;
         })
-        .catch(() => caches.match('/')),
+        .catch(() => caches.match(APP_ROOT)),
     );
     return;
   }

@@ -2,15 +2,17 @@ import type { Metadata, Viewport } from 'next';
 import { ServiceWorkerRegistration } from '@/components/service-worker-registration';
 import './globals.css';
 
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+
 export const metadata: Metadata = {
   title: 'Movie Companion',
   description:
     'Three personal picks from your Letterboxd watchlist for tonight.',
   applicationName: 'Movie Companion',
-  manifest: '/manifest.webmanifest',
+  manifest: `${basePath}/manifest.webmanifest`,
   icons: {
-    icon: '/favicon.svg',
-    apple: '/icon-192.png',
+    icon: `${basePath}/favicon.svg`,
+    apple: `${basePath}/icon-192.png`,
   },
   openGraph: {
     type: 'website',
