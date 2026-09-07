@@ -68,7 +68,11 @@ interface CandidateScore {
     runtime: string[];
   };
   limitedMetadata: boolean;
+  diversityReason?: string | null;
 }
+
+const DIVERSITY_PENALTY = 0.12;
+const DIVERSITY_RELEVANCE_FLOOR = 0.1;
 
 function hashUnit(value: string) {
   let hash = 2166136261;
@@ -379,6 +383,127 @@ function label(value: string) {
   return value.replaceAll('-', ' ');
 }
 
+function candidateSimilarity(first: CandidateScore, second: CandidateScore) {
+  const similarity = movieSimilarity(
+    extractMovieFeatures(first.movie.metadata, first.movie.year),
+    extractMovieFeatures(second.movie.metadata, second.movie.year),
+  );
+  return {
+    ...similarity,
+    reliableScore: similarity.score * similarity.confidence,
+  };
+}
+
+function diversityExplanation(
+  candidate: CandidateScore,
+  selected: CandidateScore[],
+) {
+  const features = extractMovieFeatures(
+    candidate.movie.metadata,
+    candidate.movie.year,
+  );
+  const selectedFeatures = selected.map((item) =>
+    extractMovieFeatures(item.movie.metadata, item.movie.year),
+  );
+  const selectedGenres = new Set(
+    selectedFeatures.flatMap((item) =>
+      item.genres.map((genre) => genre.toLowerCase()),
+    ),
+  );
+  const distinctiveGenres = features.genres.filter(
+    (genre) => !selectedGenres.has(genre.toLowerCase()),
+  );
+  if (distinctiveGenres.length > 0) {
+    return `Adds variety to the three with ${distinctiveGenres.slice(0, 2).join(' and ')}.`;
+  }
+
+  const selectedRuntimes = selectedFeatures
+    .map((item) => item.runtimeMinutes)
+    .filter((runtime): runtime is number => runtime !== null);
+  const runtimeMinutes = features.runtimeMinutes;
+  if (
+    runtimeMinutes !== null &&
+    selectedRuntimes.some(
+      (runtime) => Math.abs(runtime - runtimeMinutes) >= 30,
+    )
+  ) {
+    return `Adds a different pacing option at ${runtimeMinutes} minutes.`;
+  }
+
+  if (
+    features.decade &&
+    selectedFeatures.every((item) => item.decade !== features.decade)
+  ) {
+    return `Adds a different-era option from the ${formatDecade(Number(features.decade))}.`;
+  }
+
+  return 'Adds a meaningfully different option without leaving the strongest tier.';
+}
+
+function selectDiverseCandidates(scored: CandidateScore[], count: number) {
+  const remaining = [...scored];
+  const selected: CandidateScore[] = [];
+  let promotions = 0;
+  const strongestScore = scored[0]?.score ?? 0;
+
+  while (remaining.length > 0 && selected.length < count) {
+    const baseLeader = remaining[0];
+    if (selected.length === 0) {
+      selected.push(baseLeader);
+      remaining.shift();
+      continue;
+    }
+
+    const qualityTier = remaining.filter(
+      (candidate) =>
+        candidate.score >= strongestScore - DIVERSITY_RELEVANCE_FLOOR,
+    );
+    const eligible = qualityTier.length > 0 ? qualityTier : [baseLeader];
+    const rankedForSlate = eligible
+      .map((candidate) => {
+        const closestSelected = selected
+          .map((selectedCandidate) => ({
+            candidate: selectedCandidate,
+            similarity: candidateSimilarity(candidate, selectedCandidate),
+          }))
+          .sort(
+            (a, b) => b.similarity.reliableScore - a.similarity.reliableScore,
+          )[0];
+        return {
+          candidate,
+          closestSelected,
+          slateScore:
+            candidate.score -
+            (closestSelected?.similarity.reliableScore ?? 0) *
+              DIVERSITY_PENALTY,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.slateScore - a.slateScore ||
+          b.candidate.score - a.candidate.score ||
+          a.candidate.movie.title.localeCompare(b.candidate.movie.title),
+      );
+    const choice = rankedForSlate[0];
+    const promoted = choice.candidate.movie.id !== baseLeader.movie.id;
+    if (promoted) promotions += 1;
+    selected.push({
+      ...choice.candidate,
+      diversityReason: promoted
+        ? diversityExplanation(choice.candidate, selected)
+        : null,
+    });
+    remaining.splice(
+      remaining.findIndex(
+        (candidate) => candidate.movie.id === choice.candidate.movie.id,
+      ),
+      1,
+    );
+  }
+
+  return { selected, promotions };
+}
+
 function scoreTonightCandidate(
   movie: WatchlistMovie,
   profile: TasteProfile,
@@ -507,6 +632,7 @@ function buildTonightReasons(
 ) {
   const { movie, signals, contextMatches } = candidate;
   const reasons: string[] = [];
+  if (candidate.diversityReason) reasons.push(candidate.diversityReason);
   if (context.moods.length > 0 && contextMatches.mood.length > 0) {
     reasons.push(
       `Matches tonight’s ${context.moods.map(label).join(' + ')} mood through ${contextMatches.mood.slice(0, 2).join(' and ')}.`,
@@ -633,7 +759,8 @@ export function recommendMovies({
     .sort(
       (a, b) => b.score - a.score || a.movie.title.localeCompare(b.movie.title),
     );
-  const recommendations = scored.slice(0, 3).map((candidate) => ({
+  const diverseSelection = selectDiverseCandidates(scored, 3);
+  const recommendations = diverseSelection.selected.map((candidate) => ({
     movie: candidate.movie,
     mode: 'tonight' as const,
     matchScore: scoreAsPercent(candidate.score, 'tonight'),
@@ -696,6 +823,7 @@ export function recommendMovies({
       excludedByRuntime,
       excludedMissingRuntime,
       eligibleAfterFilters: runtimeEligible.length,
+      diversityPromotions: diverseSelection.promotions,
       message,
     },
   };

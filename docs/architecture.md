@@ -150,7 +150,8 @@ The engine:
 4. adds structured context contributions for mood, energy, and company;
 5. adds similarity to the best matching highly rated film;
 6. caps each feature family so one dimension cannot dominate;
-7. selects three strong results and suppresses immediate repeats;
+7. selects three strong results with diversity-aware reranking and a strict
+   relevance tier, then suppresses immediate repeats;
 8. exposes concise real contributions as the explanation and a full breakdown
    in development.
 

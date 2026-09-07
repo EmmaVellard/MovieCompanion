@@ -364,6 +364,7 @@ export interface RecommendationDiagnostics {
   excludedByRuntime: number;
   excludedMissingRuntime: number;
   eligibleAfterFilters: number;
+  diversityPromotions: number;
   message: string | null;
 }
 

@@ -381,8 +381,9 @@ export function TonightView({
             ))}
           </div>
           <p className="mt-4 text-xs leading-5 text-muted-foreground">
-            Match scores are relative rankings from the current transparent
-            model—not predicted probabilities.
+            Fit scores are relative rankings from the current transparent
+            model—not predicted probabilities. The three picks are balanced to
+            avoid near-duplicate choices.
           </p>
         </section>
       )}
@@ -576,7 +577,7 @@ function RecommendationCard({
             {modeLabel}
           </p>
           <p className="text-sm font-semibold text-primary">
-            {recommendation.matchScore}% match
+            Fit {recommendation.matchScore}/100
           </p>
         </div>
         <button
@@ -653,7 +654,7 @@ function RecommendationDialog({
           <>
             <DialogHeader className="pr-8">
               <p className="text-xs font-semibold uppercase tracking-[0.13em] text-primary">
-                {recommendation.matchScore}% match
+                Fit score {recommendation.matchScore}/100
               </p>
               <DialogTitle className="text-2xl leading-tight font-semibold tracking-[-0.04em]">
                 {recommendation.movie.title}
@@ -799,8 +800,8 @@ function PickedDialog({
                 {recommendation.movie.title}
               </DialogTitle>
               <DialogDescription className="mt-2 text-white/75">
-                {recommendation.movie.year ?? 'Year unknown'} ·{' '}
-                {recommendation.matchScore}% match
+                {recommendation.movie.year ?? 'Year unknown'} · Fit{' '}
+                {recommendation.matchScore}/100
               </DialogDescription>
             </div>
             <div className="p-5">

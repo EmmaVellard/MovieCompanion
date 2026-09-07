@@ -184,6 +184,114 @@ describe('recommendMovies', () => {
     expect(secondIds).toEqual(['intense-3', 'long-7', 'horror-4']);
   });
 
+  it('diversifies near-equal candidates without leaving the strongest tier', () => {
+    const similarThrillers = [
+      watchlistMovie(
+        'movie-20',
+        'Thriller One',
+        105,
+        ['Thriller', 'Mystery'],
+        ['psychological', 'investigation'],
+      ),
+      watchlistMovie(
+        'movie-35',
+        'Thriller Two',
+        105,
+        ['Thriller', 'Mystery'],
+        ['psychological', 'investigation'],
+      ),
+      watchlistMovie(
+        'movie-33',
+        'Thriller Three',
+        105,
+        ['Thriller', 'Mystery'],
+        ['psychological', 'investigation'],
+      ),
+    ];
+    const alternatives = [
+      watchlistMovie(
+        'movie-13',
+        'Warm Comedy',
+        105,
+        ['Comedy'],
+        ['friendship'],
+      ),
+      watchlistMovie(
+        'movie-2',
+        'Nature Documentary',
+        105,
+        ['Documentary'],
+        ['nature'],
+      ),
+      watchlistMovie(
+        'movie-10',
+        'Animated Journey',
+        105,
+        ['Animation'],
+        ['coming of age'],
+      ),
+    ];
+
+    const result = run(
+      baseContext,
+      library([...similarThrillers, ...alternatives]),
+    );
+    const thrillerCount = result.recommendations.filter(({ movie }) =>
+      movie.metadata?.genres.includes('Thriller'),
+    ).length;
+
+    expect(result.recommendations).toHaveLength(3);
+    expect(thrillerCount).toBeLessThanOrEqual(1);
+    expect(result.diagnostics.diversityPromotions).toBeGreaterThan(0);
+    expect(
+      result.recommendations.some(({ reasons }) =>
+        reasons.some((reason) => reason.startsWith('Adds variety')),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not use diversity to promote a weak contextual match', () => {
+    const strongMatches = [
+      watchlistMovie(
+        'strong-1',
+        'Strong One',
+        105,
+        ['Thriller', 'Crime'],
+        ['psychological', 'suspense'],
+      ),
+      watchlistMovie(
+        'strong-2',
+        'Strong Two',
+        105,
+        ['Thriller', 'Crime'],
+        ['psychological', 'suspense'],
+      ),
+      watchlistMovie(
+        'strong-3',
+        'Strong Three',
+        105,
+        ['Thriller', 'Crime'],
+        ['psychological', 'suspense'],
+      ),
+    ];
+    const weakMatches = [
+      watchlistMovie('weak-1', 'Quiet Comedy', 105, ['Comedy'], ['friendship']),
+      watchlistMovie('weak-2', 'Nature Film', 105, ['Documentary'], ['nature']),
+      watchlistMovie('weak-3', 'Gentle Romance', 105, ['Romance'], ['love']),
+    ];
+
+    const result = run(
+      { ...baseContext, moods: ['intense'] },
+      library([...strongMatches, ...weakMatches]),
+    );
+
+    expect(
+      result.recommendations.every(({ movie }) =>
+        movie.metadata?.genres.includes('Thriller'),
+      ),
+    ).toBe(true);
+  });
+
   it('changes ranking when the selected energy changes', () => {
     const easy = run({ ...baseContext, energy: 'easy' });
     const fullAttention = run({ ...baseContext, energy: 'full-attention' });

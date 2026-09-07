@@ -8,7 +8,7 @@ better evaluation, and a small amount of local feedback.
 
 Recommended order:
 
-1. diversify the three results after scoring;
+1. diversify the three results after scoring — **implemented**;
 2. store local recommendation outcomes such as “picked” and “not tonight”;
 3. replace leave-one-out evaluation with a time-ordered backtest;
 4. tune the existing feature weights only when the backtest proves an
@@ -36,20 +36,19 @@ would weaken the privacy model.
 
 ## Current limitations
 
-### The displayed percentage is not a probability
+### The displayed percentage is not a probability — addressed in the UI
 
-The current match percentage is a linear presentation transform of the weighted
-score. “94% match” does not mean a 94% chance that the user will like or choose
-the movie. Until outcome data supports calibration, the UI should describe it
-as a **fit score**, or the number should be calibrated against held-out ratings
-and real recommendation choices.
+The number is a linear presentation transform of the weighted score. “94” does
+not mean a 94% chance that the user will like or choose the movie. The UI now
+describes it as a **fit score out of 100**. It should only become a probability
+if future outcome data supports calibration.
 
-### The top three can be redundant
+### The top three can be redundant — addressed
 
-Movies are ranked independently and the first three are returned. They can
-therefore share the same dominant genre, era, director, or tone. A three-choice
-interface is most useful when each option represents a genuinely different good
-answer.
+The initial engine ranked movies independently and returned the first three.
+The current engine now reranks only within a strict relevance tier, penalizing
+strongly supported similarity to selections already in the slate. A
+diversity-specific explanation is shown whenever this promotes an alternative.
 
 ### Offline rating prediction is not the same as tonight usefulness
 
@@ -81,7 +80,7 @@ popularity, and themes, while requiring at least one strong positive bridge.
 
 ## Proposed Recommendation Engine v2
 
-### 1. Diversity-aware three-film slate
+### 1. Diversity-aware three-film slate — implemented
 
 Keep the current base scores, then select results greedily:
 
@@ -186,8 +185,8 @@ never let an LLM invent a preference.
 
 ## Small implementation milestones
 
-1. Add deterministic diversity reranking with tests for relevance floor and
-   non-redundant slates.
+1. **Complete:** deterministic diversity reranking with a relevance floor and
+   non-redundant-slate tests.
 2. Add local, exportable recommendation-event records and a clear-data path.
 3. Add rolling temporal evaluation alongside the existing leave-one-out report.
 4. Compare the current weights against a regularized fitted variant on the

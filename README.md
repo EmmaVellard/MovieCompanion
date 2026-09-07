@@ -22,7 +22,9 @@ Tell Movie Companion as much or as little as you want:
 - whether you want an easy watch or something that deserves full attention.
 
 The app returns three films from your own watchlist. Each recommendation shows
-why it fits, separating your long-term taste from what suits tonight.
+a transparent fit score and why it surfaced, separating your long-term taste
+from what suits tonight. The final set is balanced so three near-duplicate
+choices do not crowd out an equally strong alternative.
 
 ## Surprise me
 
