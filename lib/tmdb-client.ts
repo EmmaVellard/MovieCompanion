@@ -15,8 +15,10 @@ import type {
   MetadataEnrichmentProgress,
   MetadataMovieInput,
   MovieMetadata,
+  MovieMetadataCandidate,
   MovieMetadataStatusSummary,
   TmdbImageConfiguration,
+  UnresolvedMovieMatch,
 } from '@/lib/types';
 
 const TMDB_API_ROOT = 'https://api.themoviedb.org/3';
@@ -301,6 +303,7 @@ async function matchedMetadata(
     director: director?.name ?? null,
     cast,
     candidates: decision.candidates,
+    matchMethod: 'automatic',
     attemptedAt: new Date().toISOString(),
     error: null,
   };
@@ -321,6 +324,42 @@ async function requestMetadata(
         ? await matchedMetadata(movie, decision, readAccessToken)
         : unresolvedMetadata(movie, decision),
   };
+}
+
+export async function resolveMovieMetadataCandidate(
+  unresolved: UnresolvedMovieMatch,
+  candidate: MovieMetadataCandidate,
+) {
+  const readAccessToken = await getTmdbReadAccessToken();
+  if (!readAccessToken) {
+    throw new MetadataEnrichmentError(
+      'Save a TMDB API Read Access Token in Data before resolving matches.',
+      'TMDB_NOT_CONFIGURED',
+    );
+  }
+
+  const decision: Extract<TmdbMatchDecision, { status: 'matched' }> = {
+    status: 'matched',
+    match: {
+      id: candidate.tmdbId,
+      title: candidate.title,
+      original_title: candidate.originalTitle,
+      release_date: candidate.year ? `${candidate.year}-01-01` : undefined,
+      poster_path: candidate.posterPath,
+    },
+    confidence: candidate.confidence,
+    candidates: unresolved.metadata.candidates,
+  };
+  const [configuration, automaticMetadata] = await Promise.all([
+    getImageConfiguration(readAccessToken),
+    matchedMetadata(unresolved.movie, decision, readAccessToken),
+  ]);
+  const metadata: MovieMetadata = {
+    ...automaticMetadata,
+    matchMethod: 'manual',
+  };
+  await saveMovieMetadata(metadata, configuration);
+  return metadata;
 }
 
 function errorMetadata(

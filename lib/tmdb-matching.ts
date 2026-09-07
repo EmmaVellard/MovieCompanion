@@ -5,6 +5,7 @@ export interface TmdbSearchCandidate {
   title: string;
   original_title: string;
   release_date?: string;
+  poster_path?: string | null;
   popularity?: number;
   alternative_titles?: string[];
 }
@@ -104,6 +105,7 @@ function scoreCandidate(
     originalTitle: candidate.original_title,
     year: candidateYear,
     confidence,
+    posterPath: candidate.poster_path ?? null,
     source: candidate,
     exactTitle,
     exactYear: yearDistance === 0,

@@ -1,106 +1,133 @@
 # Movie Companion
 
-Movie Companion is a private, local-first movie picker that complements Letterboxd. Letterboxd remains the source of truth for watched films, ratings, and the watchlist.
+**Three personal movie picks for tonight, chosen from your Letterboxd watchlist.**
 
-## Current milestone
+[Open Movie Companion](https://emmavellard.github.io/MovieCompanion/)
 
-The current local-first build includes:
+![Movie Companion Tonight screen](docs/movie-companion-tonight.jpg)
 
-- a responsive, mobile-first dark interface;
-- import for extracted Letterboxd `ratings.csv`, `watched.csv`, and `watchlist.csv` files;
-- tolerant column aliases and a manual data-type choice when a filename is ambiguous;
-- row-level validation, deduplication, and import summaries;
-- IndexedDB persistence scoped to this browser and site origin;
-- searchable and sortable Watchlist, Taste, and Data views;
-- a deterministic Tonight picker that ranks only unwatched watchlist films and returns exactly three when at least three are available;
-- separate, inspectable taste and tonight-context scores, with strict runtime filtering;
-- explainable Safe, Risky, and Wildcard surprise strategies;
-- confidence-shrunk, sample-aware decade and genre signals derived from real ratings;
-- resumable TMDB enrichment for posters, runtimes, genres, keywords, credits, language, country, and release metadata;
-- conservative title-and-year matching with explicit unmatched and ambiguous states;
-- a PWA manifest, install icons, standalone display settings, and a small offline app-shell cache.
+Movie Companion helps answer one question: **What should I watch tonight?**
 
-It intentionally does not include authentication, cloud sync, or AI. Recommendations combine a personal taste score with a separate tonight-context score. Mood, energy, and company use only confirmed TMDB genres, keywords, overview text, and runtime; runtime limits exclude films whose runtime is too long or still unknown.
+Letterboxd remains the home for your watched films, ratings, and watchlist.
+Movie Companion uses that data privately in your browser to understand your
+taste and narrow your watchlist to three explainable recommendations.
 
-## Run locally
+## Choose for tonight
 
-Requirements: Node.js 22.13 or newer and npm.
+Tell Movie Companion as much or as little as you want:
 
-```bash
-cd /Users/emma/Documents/Code/MovieCompanion
-npm install
-npm run dev
-```
+- your mood, such as fun, intense, comforting, weird, or thought-provoking;
+- how much time you have;
+- whether you are watching alone, with friends, or on a date;
+- whether you want an easy watch or something that deserves full attention.
 
-To enrich movies, create a free TMDB API credential. Open **Data → TMDB
-access** in the app and save the API Read Access Token. The token is stored in
-IndexedDB for that browser and is never committed to the repository.
+The app returns three films from your own watchlist. Each recommendation shows
+why it fits, separating your long-term taste from what suits tonight.
 
-Open [http://localhost:3000](http://localhost:3000) in a browser. Stop the local server with `Control-C`.
+## Surprise me
 
-For a production check:
+When you do not want to choose filters, use one of three distinct modes:
 
-```bash
-npm run lint
-npm run typecheck
-npm run build
-```
+- **Safe Pick** — strongly aligned with the taste signals the app knows well;
+- **Risky Pick** — promising, but based on less-certain signals;
+- **Wildcard** — outside your usual habits, with a meaningful connection back
+  to something you tend to enjoy.
 
-## Import Letterboxd data
+The Wildcard is designed to keep the app from turning your taste into a narrow
+bubble.
 
-1. Request an export from Letterboxd's Data settings.
-2. Extract the downloaded ZIP.
-3. In Movie Companion, open **Data**, choose **Import files**, and select any combination of the ratings, watched, and watchlist CSV files.
-4. Review the detected data type and import.
+## Your Taste Profile
 
-Reimporting a data type replaces that type's prior local snapshot. Importing a watchlist file does not change anything in Letterboxd.
+Movie Companion turns your ratings into understandable patterns. It can show
+which genres, genre combinations, directors, countries, languages, decades,
+runtimes, themes, and actors you tend to rate above or below your average.
 
-## Enrich movie metadata
+Small samples are treated cautiously, so one highly rated film does not become
+a strong preference by itself.
 
-After importing Letterboxd files, open **Data** and choose **Enrich missing metadata**. Each result is written to IndexedDB immediately, so closing the tab or losing the network does not discard completed matches. Run the same action again to resume errors or newly imported films. Low-confidence and duplicate-title matches are kept as **Unmatched** or **Ambiguous** rather than accepting a potentially incorrect poster; use **Retry unresolved matches** after correcting source data or improving matching rules.
+## Get started
 
-The browser sends the saved credential plus only the movie title and year
-directly to TMDB. Ratings, watched dates, and the rest of each CSV stay in the
-browser. This product uses the TMDB API but is not endorsed or certified by
-TMDB.
+1. [Export your Letterboxd data](https://letterboxd.com/settings/data/).
+2. Open Movie Companion and choose **Import Letterboxd ZIP**.
+3. Select the ZIP you downloaded. Movie Companion finds and imports
+   `ratings.csv`, `watched.csv`, and `watchlist.csv` for you.
+4. Under **Data → TMDB access**, save your TMDB API Read Access Token.
+5. Select **Enrich missing metadata** to add posters and movie details.
+6. Return to **Tonight**, choose any preferences, and select **Find my movie**.
 
-## Privacy and persistence
+The setup checklist on the Tonight screen shows what is complete and what still
+needs attention. You can also import individual CSV files if you prefer.
 
-CSV contents, the TMDB credential, and enriched metadata are stored in
-IndexedDB. Metadata enrichment sends the credential, movie titles, and years
-directly to TMDB; it does not send ratings or viewing history. Browser storage
-is origin-specific: localhost and the GitHub Pages deployment have separate
-libraries. Clearing site data removes the local library and credential, so a
-backup/export feature should be added before this becomes the only convenient
-copy of any derived data.
+You do not need to understand the CSV columns. Movie Companion recognizes the
+Letterboxd file type, validates the rows, reports what was imported, and avoids
+creating duplicate movies.
 
-## GitHub and deployment
+If TMDB cannot confidently identify a title, open **Data → Movie metadata →
+Review uncertain matches** and choose the correct movie. Ambiguous matches are
+never accepted automatically.
 
-This is a static Next.js 16 application hosted at
-[emmavellard.github.io/MovieCompanion](https://emmavellard.github.io/MovieCompanion/).
-Every push to `main` runs linting, TypeScript checks, tests, a production static
-export, and a GitHub Pages deployment.
+## Which Letterboxd files do I need?
 
-After creating an empty GitHub repository, connect and push it with:
+| File            | What it provides                        | Needed?  |
+| --------------- | --------------------------------------- | -------- |
+| `ratings.csv`   | Your ratings and personal taste signals | Yes      |
+| `watchlist.csv` | The films Movie Companion may recommend | Yes      |
+| `watched.csv`   | Unrated watched films and watched dates | Optional |
 
-```bash
-git remote add origin https://github.com/YOUR-USERNAME/MovieCompanion.git
-git push -u origin main
-```
+To update your library later, export Letterboxd again and import the latest
+files. A newer file replaces the previous snapshot of that type. It does not
+change anything in your Letterboxd account.
 
-In the repository’s **Settings → Pages**, set **Source** to **GitHub Actions**.
-No TMDB secret belongs in GitHub Actions: every person using the app saves their
-own token locally in their browser. Browser data is origin-specific, so the
-GitHub Pages version requires its own Letterboxd import even if localhost was
-already configured.
+## TMDB movie details
 
-## Verify changes
+Posters, runtimes, genres, directors, cast, languages, countries, keywords, and
+other movie information come from [TMDB](https://www.themoviedb.org/).
 
-```bash
-npm test
-npm run lint
-npm run typecheck
-npm run build
-```
+Each person using Movie Companion supplies their own TMDB API Read Access
+Token. You can create one from your [TMDB API settings](https://www.themoviedb.org/settings/api).
+The token is stored only in that browser and is never saved in this GitHub
+repository.
 
-See [docs/architecture.md](docs/architecture.md) for the proposed MVP boundaries and roadmap.
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+
+## Privacy
+
+Movie Companion has no account system, analytics, advertising, or social
+features. Your Letterboxd files, ratings, watchlist, Taste Profile, and enriched
+movie library are stored locally in your browser.
+
+During metadata enrichment, your TMDB token and the title and year of the movie
+being matched are sent directly to TMDB. Your ratings and watched dates are not
+sent.
+
+Local data belongs to one browser and one website address. Data imported on
+`localhost`, on the published website, on another device, or in another browser
+profile is separate. Clearing the website's browser data removes the local
+library.
+
+Use **Data → Backup & restore** to download a copy of your imported library and
+cached movie details. You can restore that file in another browser or device.
+For security, the TMDB token is not included in backups.
+
+## Install on iPhone
+
+1. Open [Movie Companion](https://emmavellard.github.io/MovieCompanion/) in
+   Safari.
+2. Tap the **Share** button.
+3. Choose **Add to Home Screen**.
+4. Tap **Add**.
+
+Movie Companion will then open from your Home Screen in a standalone,
+app-like view.
+
+## Can someone else use it?
+
+Yes. Anyone can open the same website and import their own Letterboxd data.
+Their library and TMDB token remain in their own browser and do not mix with
+yours. On a shared computer, use separate browser profiles to keep libraries
+separate.
+
+---
+
+Movie Companion is an independent personal project. Letterboxd remains the
+source of truth for your movie activity.

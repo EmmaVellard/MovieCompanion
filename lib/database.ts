@@ -1,18 +1,25 @@
 import { openDB, type DBSchema } from 'idb';
 
+import {
+  MOVIE_COMPANION_BACKUP_VERSION,
+  parseMovieCompanionBackup,
+} from '@/lib/backup';
 import { getPreparedFileValidationError } from '@/lib/letterboxd';
 import type {
+  BackupRestoreSummary,
   ImportSummary,
   LetterboxdDataStatus,
   LetterboxdFileKind,
   MetadataMovieInput,
+  MovieCompanionBackup,
   MovieMetadata,
   MovieMetadataStatusSummary,
   MovieLibrary,
   PreparedImportFile,
   SourceMovieRecord,
-  TmdbImageConfiguration,
   TmdbCredentialSettings,
+  TmdbImageConfiguration,
+  UnresolvedMovieMatch,
   WatchedMovie,
   WatchlistMovie,
 } from '@/lib/types';
@@ -313,6 +320,91 @@ export async function saveMovieMetadata(
     await transaction.objectStore('tmdbConfiguration').put(configuration);
   }
   await transaction.done;
+}
+
+export async function getUnresolvedMovieMatches(): Promise<
+  UnresolvedMovieMatch[]
+> {
+  const db = await getDatabase();
+  const [records, metadataRecords] = await Promise.all([
+    db.getAll('sourceMovies'),
+    db.getAll('movieMetadata'),
+  ]);
+  const moviesByKey = new Map(
+    uniqueMovieInputs(records).map((movie) => [movie.movieKey, movie]),
+  );
+
+  return metadataRecords
+    .filter(
+      (metadata) =>
+        (metadata.status === 'unmatched' || metadata.status === 'ambiguous') &&
+        metadata.candidates.length > 0 &&
+        moviesByKey.has(metadata.movieKey),
+    )
+    .map((metadata) => ({
+      movie: moviesByKey.get(metadata.movieKey)!,
+      metadata,
+    }))
+    .sort((a, b) => compareMovies(a.movie, b.movie));
+}
+
+export async function createMovieCompanionBackup(): Promise<MovieCompanionBackup> {
+  const db = await getDatabase();
+  const [sourceMovies, imports, movieMetadata, tmdbConfiguration] =
+    await Promise.all([
+      db.getAll('sourceMovies'),
+      db.getAll('imports'),
+      db.getAll('movieMetadata'),
+      db.get('tmdbConfiguration', 'tmdb'),
+    ]);
+
+  return {
+    format: 'movie-companion-backup',
+    version: MOVIE_COMPANION_BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    data: {
+      sourceMovies,
+      imports,
+      movieMetadata,
+      tmdbConfiguration: tmdbConfiguration ?? null,
+    },
+  };
+}
+
+export async function restoreMovieCompanionBackup(
+  value: unknown,
+): Promise<BackupRestoreSummary> {
+  const backup = parseMovieCompanionBackup(value);
+  const db = await getDatabase();
+  const transaction = db.transaction(
+    ['sourceMovies', 'imports', 'movieMetadata', 'tmdbConfiguration'],
+    'readwrite',
+  );
+  const sourceMovies = transaction.objectStore('sourceMovies');
+  const imports = transaction.objectStore('imports');
+  const movieMetadata = transaction.objectStore('movieMetadata');
+  const tmdbConfiguration = transaction.objectStore('tmdbConfiguration');
+
+  const requests: Array<Promise<unknown>> = [
+    sourceMovies.clear(),
+    imports.clear(),
+    movieMetadata.clear(),
+    tmdbConfiguration.clear(),
+    ...backup.data.sourceMovies.map((record) => sourceMovies.put(record)),
+    ...backup.data.imports.map((summary) => imports.put(summary)),
+    ...backup.data.movieMetadata.map((metadata) => movieMetadata.put(metadata)),
+  ];
+  if (backup.data.tmdbConfiguration) {
+    requests.push(tmdbConfiguration.put(backup.data.tmdbConfiguration));
+  }
+  await Promise.all(requests);
+  await transaction.done;
+
+  return {
+    sourceMovies: backup.data.sourceMovies.length,
+    metadataRecords: backup.data.movieMetadata.length,
+    imports: backup.data.imports.length,
+  };
 }
 
 export async function getLatestImport() {

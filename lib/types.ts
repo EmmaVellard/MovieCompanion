@@ -42,6 +42,7 @@ export interface MovieMetadataCandidate {
   originalTitle: string;
   year: number | null;
   confidence: number;
+  posterPath?: string | null;
 }
 
 export interface MovieMetadata {
@@ -64,6 +65,7 @@ export interface MovieMetadata {
   director: string | null;
   cast: string[];
   candidates: MovieMetadataCandidate[];
+  matchMethod?: 'automatic' | 'manual';
   attemptedAt: string;
   error: string | null;
 }
@@ -80,6 +82,29 @@ export interface TmdbCredentialSettings {
   id: 'tmdb-credential';
   readAccessToken: string;
   savedAt: string;
+}
+
+export interface MovieCompanionBackup {
+  format: 'movie-companion-backup';
+  version: 1;
+  exportedAt: string;
+  data: {
+    sourceMovies: SourceMovieRecord[];
+    imports: ImportSummary[];
+    movieMetadata: MovieMetadata[];
+    tmdbConfiguration: TmdbImageConfiguration | null;
+  };
+}
+
+export interface BackupRestoreSummary {
+  sourceMovies: number;
+  metadataRecords: number;
+  imports: number;
+}
+
+export interface UnresolvedMovieMatch {
+  movie: MetadataMovieInput;
+  metadata: MovieMetadata;
 }
 
 export interface MovieMetadataStatusSummary {

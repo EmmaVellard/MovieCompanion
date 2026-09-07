@@ -12,30 +12,39 @@ import {
 
 import { DataView } from '@/components/data-view';
 import { ImportDialog } from '@/components/import-dialog';
+import { MetadataMatchDialog } from '@/components/metadata-match-dialog';
+import { SetupGuide } from '@/components/setup-guide';
 import { TasteView } from '@/components/taste-view';
 import { TonightView } from '@/components/tonight-view';
 import { WatchlistView } from '@/components/watchlist-view';
 import {
   clearLocalMovieData,
   clearTmdbReadAccessToken,
+  createMovieCompanionBackup,
   getLetterboxdDataStatus,
   getLatestImport,
   getMovieMetadataStatus,
   getMovieLibrary,
+  getUnresolvedMovieMatches,
   hasTmdbReadAccessToken,
+  restoreMovieCompanionBackup,
   saveTmdbReadAccessToken,
 } from '@/lib/database';
 import { buildTasteProfile } from '@/lib/taste-profile';
 import {
   enrichMovieMetadata,
   MetadataEnrichmentError,
+  resolveMovieMetadataCandidate,
 } from '@/lib/tmdb-client';
 import type {
+  BackupRestoreSummary,
   ImportSummary,
   LetterboxdDataStatus,
   MetadataEnrichmentProgress,
   MovieMetadataStatusSummary,
   MovieLibrary,
+  MovieMetadataCandidate,
+  UnresolvedMovieMatch,
 } from '@/lib/types';
 
 type View = 'tonight' | 'watchlist' | 'taste' | 'data';
@@ -79,6 +88,10 @@ export function MovieCompanionApp() {
     useState<MetadataEnrichmentProgress | null>(null);
   const [loading, setLoading] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
+  const [metadataMatchesOpen, setMetadataMatchesOpen] = useState(false);
+  const [unresolvedMatches, setUnresolvedMatches] = useState<
+    UnresolvedMovieMatch[]
+  >([]);
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const profile = useMemo(() => buildTasteProfile(library), [library]);
 
@@ -89,18 +102,21 @@ export function MovieCompanionApp() {
       nextStatus,
       nextMetadataStatus,
       hasTmdbCredential,
+      nextUnresolvedMatches,
     ] = await Promise.all([
       getMovieLibrary(),
       getLatestImport(),
       getLetterboxdDataStatus(),
       getMovieMetadataStatus(),
       hasTmdbReadAccessToken(),
+      getUnresolvedMovieMatches(),
     ]);
     setLibrary(nextLibrary);
     setLatestImport(nextImport);
     setDataStatus(nextStatus);
     setMetadataStatus(nextMetadataStatus);
     setTmdbCredentialConfigured(hasTmdbCredential);
+    setUnresolvedMatches(nextUnresolvedMatches);
     setLoading(false);
     if (process.env.NODE_ENV !== 'production') {
       console.debug('[Movie Companion] local state refreshed', {
@@ -120,6 +136,7 @@ export function MovieCompanionApp() {
       getLetterboxdDataStatus(),
       getMovieMetadataStatus(),
       hasTmdbReadAccessToken(),
+      getUnresolvedMovieMatches(),
     ]).then(
       ([
         nextLibrary,
@@ -127,6 +144,7 @@ export function MovieCompanionApp() {
         nextStatus,
         nextMetadataStatus,
         hasTmdbCredential,
+        nextUnresolvedMatches,
       ]) => {
         if (cancelled) return;
         setLibrary(nextLibrary);
@@ -134,6 +152,7 @@ export function MovieCompanionApp() {
         setDataStatus(nextStatus);
         setMetadataStatus(nextMetadataStatus);
         setTmdbCredentialConfigured(hasTmdbCredential);
+        setUnresolvedMatches(nextUnresolvedMatches);
         setLoading(false);
       },
     );
@@ -179,6 +198,55 @@ export function MovieCompanionApp() {
     await clearTmdbReadAccessToken();
     setTmdbCredentialConfigured(false);
     setAnnouncement('TMDB access removed from this device.');
+  }
+
+  async function downloadBackup() {
+    const backup = await createMovieCompanionBackup();
+    const contents = JSON.stringify(backup, null, 2);
+    const url = URL.createObjectURL(
+      new Blob([contents], { type: 'application/json' }),
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `movie-companion-backup-${backup.exportedAt.slice(0, 10)}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
+
+  async function restoreBackup(file: File): Promise<BackupRestoreSummary> {
+    if (file.size > 100 * 1024 * 1024) {
+      throw new Error('This backup is too large to restore safely.');
+    }
+    let backup: unknown;
+    try {
+      backup = JSON.parse(await file.text());
+    } catch {
+      throw new Error('This file is not a valid Movie Companion backup.');
+    }
+    if (
+      !window.confirm(
+        'Restore this backup? It will replace the current movie library in this browser. Your saved TMDB token will not change.',
+      )
+    ) {
+      throw new Error(
+        'Restore cancelled. Your current library was not changed.',
+      );
+    }
+    const summary = await restoreMovieCompanionBackup(backup);
+    await refreshLibrary();
+    setAnnouncement('Movie Companion backup restored.');
+    return summary;
+  }
+
+  async function resolveMetadataMatch(
+    match: UnresolvedMovieMatch,
+    candidate: MovieMetadataCandidate,
+  ) {
+    await resolveMovieMetadataCandidate(match, candidate);
+    await refreshLibrary();
+    setAnnouncement(`${match.movie.title} matched and saved.`);
   }
 
   async function enrichMetadata(retryUnresolved = false) {
@@ -287,12 +355,25 @@ export function MovieCompanionApp() {
 
       <main className="mx-auto w-full max-w-6xl px-5 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] pt-8 sm:px-8 sm:pb-16 sm:pt-12 lg:px-10">
         {view === 'tonight' && (
-          <TonightView
-            library={library}
-            profile={profile}
-            loading={loading}
-            onImport={() => setImportOpen(true)}
-          />
+          <>
+            {!loading && (
+              <SetupGuide
+                dataStatus={dataStatus}
+                metadataStatus={metadataStatus}
+                tmdbCredentialConfigured={tmdbCredentialConfigured}
+                enrichmentRunning={enrichmentProgress?.running ?? false}
+                onImport={() => setImportOpen(true)}
+                onOpenData={() => changeView('data')}
+                onEnrich={() => void enrichMetadata(false)}
+              />
+            )}
+            <TonightView
+              library={library}
+              profile={profile}
+              loading={loading}
+              onImport={() => setImportOpen(true)}
+            />
+          </>
         )}
         {view === 'watchlist' && (
           <WatchlistView
@@ -319,8 +400,12 @@ export function MovieCompanionApp() {
             tmdbCredentialConfigured={tmdbCredentialConfigured}
             onImport={() => setImportOpen(true)}
             onEnrich={(retryUnresolved) => void enrichMetadata(retryUnresolved)}
+            reviewableMatchCount={unresolvedMatches.length}
+            onReviewMatches={() => setMetadataMatchesOpen(true)}
             onSaveTmdbCredential={saveTmdbCredential}
             onClearTmdbCredential={removeTmdbCredential}
+            onDownloadBackup={downloadBackup}
+            onRestoreBackup={restoreBackup}
             onClear={() => void clearData()}
           />
         )}
@@ -358,6 +443,13 @@ export function MovieCompanionApp() {
         open={importOpen}
         onOpenChange={setImportOpen}
         onImported={handleImported}
+      />
+      <MetadataMatchDialog
+        open={metadataMatchesOpen}
+        onOpenChange={setMetadataMatchesOpen}
+        matches={unresolvedMatches}
+        imageConfiguration={library.tmdbImageConfiguration}
+        onResolve={resolveMetadataMatch}
       />
       {announcement && (
         <button

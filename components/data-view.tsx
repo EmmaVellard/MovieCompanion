@@ -1,8 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
+  Download,
   ExternalLink,
+  FileUp,
   Images,
   KeyRound,
   RefreshCw,
@@ -13,6 +15,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import type {
+  BackupRestoreSummary,
   ImportSummary,
   LetterboxdDataStatus,
   LetterboxdFileKind,
@@ -40,9 +43,13 @@ export function DataView({
   enrichmentProgress,
   onImport,
   onEnrich,
+  reviewableMatchCount,
+  onReviewMatches,
   tmdbCredentialConfigured,
   onSaveTmdbCredential,
   onClearTmdbCredential,
+  onDownloadBackup,
+  onRestoreBackup,
   onClear,
 }: {
   library: MovieLibrary;
@@ -52,16 +59,23 @@ export function DataView({
   enrichmentProgress: MetadataEnrichmentProgress | null;
   onImport: () => void;
   onEnrich: (retryUnresolved: boolean) => void;
+  reviewableMatchCount: number;
+  onReviewMatches: () => void;
   tmdbCredentialConfigured: boolean;
   onSaveTmdbCredential: (readAccessToken: string) => Promise<void>;
   onClearTmdbCredential: () => Promise<void>;
+  onDownloadBackup: () => Promise<void>;
+  onRestoreBackup: (file: File) => Promise<BackupRestoreSummary>;
   onClear: () => void;
 }) {
+  const backupInputRef = useRef<HTMLInputElement>(null);
   const [credential, setCredential] = useState('');
   const [credentialMessage, setCredentialMessage] = useState<string | null>(
     null,
   );
   const [savingCredential, setSavingCredential] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const hasData = library.watchlist.length + library.watched.length > 0;
   const enrichmentRunning = enrichmentProgress?.running ?? false;
   const enrichmentPercent = enrichmentProgress?.total
@@ -90,6 +104,43 @@ export function DataView({
     }
   }
 
+  async function downloadBackup() {
+    setBackupBusy(true);
+    setBackupMessage(null);
+    try {
+      await onDownloadBackup();
+      setBackupMessage('Backup downloaded. Keep it somewhere safe.');
+    } catch (error) {
+      setBackupMessage(
+        error instanceof Error
+          ? error.message
+          : 'The backup could not be created.',
+      );
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function restoreBackup(file: File) {
+    setBackupBusy(true);
+    setBackupMessage(null);
+    try {
+      const restored = await onRestoreBackup(file);
+      setBackupMessage(
+        `Backup restored: ${restored.sourceMovies.toLocaleString()} Letterboxd records and ${restored.metadataRecords.toLocaleString()} metadata records.`,
+      );
+    } catch (error) {
+      setBackupMessage(
+        error instanceof Error
+          ? error.message
+          : 'The backup could not be restored.',
+      );
+    } finally {
+      setBackupBusy(false);
+      if (backupInputRef.current) backupInputRef.current.value = '';
+    }
+  }
+
   return (
     <section className="mx-auto max-w-3xl">
       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">
@@ -111,10 +162,10 @@ export function DataView({
                 <Upload className="size-4" aria-hidden="true" />
               </span>
               <div>
-                <h2 className="font-medium">Letterboxd CSV import</h2>
+                <h2 className="font-medium">Letterboxd import</h2>
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  Ratings, watched history, and watchlist snapshots are
-                  supported.
+                  Import the export ZIP directly, or add ratings, watched, and
+                  watchlist CSV files individually.
                 </p>
               </div>
             </div>
@@ -188,6 +239,61 @@ export function DataView({
             Open Letterboxd data export
             <ExternalLink className="size-3" aria-hidden="true" />
           </a>
+        </article>
+
+        <article className="rounded-[2rem] border border-border bg-card p-5 sm:p-6">
+          <div className="flex items-start gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-muted text-primary">
+              <Download className="size-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="font-medium">Backup & restore</h2>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                Save your imported movies and cached metadata in one file, then
+                restore them in this or another browser.
+              </p>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 rounded-xl"
+                  disabled={!hasData || backupBusy}
+                  onClick={() => void downloadBackup()}
+                >
+                  <Download aria-hidden="true" />
+                  Download backup
+                </Button>
+                <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-medium transition-colors hover:bg-secondary focus-within:ring-3 focus-within:ring-ring/50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                  <FileUp className="size-4" aria-hidden="true" />
+                  Restore backup
+                  <input
+                    ref={backupInputRef}
+                    className="sr-only"
+                    type="file"
+                    accept=".json,application/json"
+                    disabled={backupBusy}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void restoreBackup(file);
+                    }}
+                  />
+                </label>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                Restoring replaces the current movie library after confirmation.
+                Your TMDB token is never included in a backup and is not
+                changed.
+              </p>
+              {backupMessage && (
+                <output
+                  aria-live="polite"
+                  className="mt-3 block rounded-xl border border-border bg-background/45 p-3 text-xs leading-5 text-muted-foreground"
+                >
+                  {backupMessage}
+                </output>
+              )}
+            </div>
+          </div>
         </article>
 
         <article className="rounded-[2rem] border border-border bg-card p-5 sm:p-6">
@@ -355,15 +461,28 @@ export function DataView({
               </output>
             )}
             {unresolved > 0 && !enrichmentRunning && (
-              <Button
-                variant="ghost"
-                className="mt-3 h-10 rounded-xl px-3 text-xs text-muted-foreground"
-                disabled={!tmdbCredentialConfigured}
-                onClick={() => onEnrich(true)}
-              >
-                Retry {unresolved.toLocaleString()} unresolved{' '}
-                {unresolved === 1 ? 'match' : 'matches'}
-              </Button>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {reviewableMatchCount > 0 && (
+                  <Button
+                    variant="outline"
+                    className="h-10 rounded-xl px-3 text-xs"
+                    disabled={!tmdbCredentialConfigured}
+                    onClick={onReviewMatches}
+                  >
+                    Review {reviewableMatchCount.toLocaleString()} uncertain{' '}
+                    {reviewableMatchCount === 1 ? 'match' : 'matches'}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  className="h-10 rounded-xl px-3 text-xs text-muted-foreground"
+                  disabled={!tmdbCredentialConfigured}
+                  onClick={() => onEnrich(true)}
+                >
+                  Retry {unresolved.toLocaleString()} unresolved{' '}
+                  {unresolved === 1 ? 'match' : 'matches'}
+                </Button>
+              </div>
             )}
           </div>
 

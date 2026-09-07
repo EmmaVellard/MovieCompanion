@@ -25,6 +25,7 @@ import {
   letterboxdFileKindLabels,
   prepareLetterboxdCsv,
 } from '@/lib/letterboxd';
+import { extractLetterboxdCsvFiles } from '@/lib/letterboxd-zip';
 import type {
   ImportSummary,
   LetterboxdFileKind,
@@ -50,7 +51,7 @@ const importKinds = Object.entries(letterboxdFileKindLabels) as Array<
 >;
 
 function fileNamesLabel(fileNames: string[]) {
-  if (fileNames.length === 0) return 'your CSV';
+  if (fileNames.length === 0) return 'your export';
   if (fileNames.length === 1) return fileNames[0];
   return `${fileNames.length} Letterboxd files`;
 }
@@ -103,29 +104,45 @@ export function ImportDialog({
 
   async function prepareFiles(files: File[]) {
     if (inputRef.current) inputRef.current.value = '';
-    const csvFiles = files.filter(
+    const supportedFiles = files.filter(
       (file) =>
-        file.name.toLowerCase().endsWith('.csv') || file.type === 'text/csv',
+        file.name.toLowerCase().endsWith('.csv') ||
+        file.name.toLowerCase().endsWith('.zip') ||
+        file.type === 'text/csv' ||
+        file.type === 'application/zip',
     );
 
-    if (csvFiles.length === 0) {
+    if (supportedFiles.length === 0) {
       setCurrentFileNames(files.map((file) => file.name));
       setPreparedFiles([]);
       setError(
-        'Choose one or more CSV files from your extracted Letterboxd export.',
+        'Choose the Letterboxd export ZIP or one or more CSV files from it.',
       );
       setPhase('failure');
       return;
     }
 
-    setCurrentFileNames(csvFiles.map((file) => file.name));
+    setCurrentFileNames(supportedFiles.map((file) => file.name));
     setPreparedFiles([]);
     setSuccessSummary(null);
     setError(null);
     setPhase('reading');
 
     try {
-      const results = await Promise.all(csvFiles.map(prepareLetterboxdCsv));
+      const expandedFiles = (
+        await Promise.all(
+          supportedFiles.map((file) =>
+            file.name.toLowerCase().endsWith('.zip') ||
+            file.type === 'application/zip'
+              ? extractLetterboxdCsvFiles(file)
+              : Promise.resolve([file]),
+          ),
+        )
+      ).flat();
+      setCurrentFileNames(expandedFiles.map((file) => file.name));
+      const results = await Promise.all(
+        expandedFiles.map(prepareLetterboxdCsv),
+      );
       setPreparedFiles(results);
 
       const schemaFailure = results.find((file) => file.fatalError);
@@ -144,7 +161,9 @@ export function ImportDialog({
     } catch (caughtError) {
       console.error('[Movie Companion import] file read failed', caughtError);
       setError(
-        'The file could not be read. Make sure it is an unmodified CSV file.',
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'The file could not be read. Choose the original Letterboxd export ZIP or one of its CSV files.',
       );
       setPhase('failure');
     }
@@ -182,8 +201,9 @@ export function ImportDialog({
             Import from Letterboxd
           </DialogTitle>
           <DialogDescription className="leading-6">
-            Add ratings.csv, watched.csv, or watchlist.csv. Movie Companion
-            recognizes the file and saves it locally on this device.
+            Add ratings.csv, watched.csv, or watchlist.csv. Movie Companion can
+            open the Letterboxd export ZIP directly, recognizes the files, and
+            saves them locally on this device.
           </DialogDescription>
         </DialogHeader>
 
@@ -201,7 +221,7 @@ export function ImportDialog({
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
               {phase === 'reading'
-                ? 'Reading, recognizing, and validating the CSV.'
+                ? 'Opening, recognizing, and validating your Letterboxd data.'
                 : 'Saving to this device and refreshing your library.'}
             </p>
           </output>
@@ -311,17 +331,17 @@ export function ImportDialog({
               className="mx-auto size-7 text-primary"
               aria-hidden="true"
             />
-            <p className="mt-3 font-medium">Drop CSV files here</p>
+            <p className="mt-3 font-medium">Drop your Letterboxd export here</p>
             <p className="mt-1 text-xs text-muted-foreground">
               or choose them from this device
             </p>
             <label className="mt-4 inline-flex h-11 cursor-pointer items-center justify-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover focus-within:ring-3 focus-within:ring-ring/50 active:bg-primary-hover">
-              Choose CSV files
+              Choose ZIP or CSV files
               <input
                 ref={inputRef}
                 className="sr-only"
                 type="file"
-                accept=".csv,text/csv"
+                accept=".zip,.csv,application/zip,text/csv"
                 multiple
                 disabled={busy}
                 onChange={(event) =>
