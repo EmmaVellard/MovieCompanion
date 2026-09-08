@@ -10,10 +10,11 @@ Recommended order:
 
 1. diversify the three results after scoring — **implemented**;
 2. store local recommendation outcomes such as “picked” and “not tonight”;
-3. replace leave-one-out evaluation with a time-ordered backtest;
+3. replace leave-one-out evaluation with a time-ordered backtest —
+   **implemented**;
 4. tune the existing feature weights only when the backtest proves an
-   improvement;
-5. make Wildcard distance multidimensional;
+   improvement — **implemented conservatively**;
+5. make Wildcard distance multidimensional — **implemented**;
 6. add embeddings later as one interpretable similarity signal.
 
 ## What the current engine already does well
@@ -57,26 +58,29 @@ whether a recommendation was appealing in a particular mood, whether it was
 available, or why it was rejected that night. The app currently has no local
 outcome data for that distinction.
 
-### Leave-one-out evaluation leaks later taste into earlier predictions
+### Temporal leakage in leave-one-out evaluation — addressed
 
 Holding out one rating while training on every other rating allows ratings from
-the future to inform a prediction about the past. A rolling, time-ordered test
-better matches how the app will actually update. Research on recommender
+the future to inform a prediction about the past. The evaluator now reports a
+primary rolling, time-ordered test that trains only on earlier activity dates;
+leave-one-out remains a secondary diagnostic. Research on recommender
 evaluation identifies temporal leakage as a source of misleading offline
 results ([Ji et al., 2020](https://arxiv.org/abs/2010.11060)).
 
-### Correlated signals can be counted more than once
+### Correlated signals can be counted more than once — reduced
 
-Genre, genre combination, keyword, similarity, and interaction features overlap.
-Hand-set weights make this understandable, but they can still over-emphasize a
-single underlying trait. Weight tuning must therefore use regularization and
-feature ablation, not unconstrained optimization.
+Genre, genre combination, keyword, similarity, and interaction features
+overlap. Genre combinations and interaction patterns now contribute only their
+confidence-shrunk lift beyond the broader parent categories. Secondary signals
+also have deliberately small weights because the temporal ablation did not show
+that they independently improve ranking yet.
 
-### Wildcard distance is too narrow
+### Wildcard distance was too narrow — addressed
 
-Wildcard currently relies heavily on release-year distance and uncertainty. It
-should measure distance across genre, country, language, decade, runtime,
-popularity, and themes, while requiring at least one strong positive bridge.
+Wildcard now measures distance across genre, country, language, decade,
+runtime, and themes, while requiring a confidence-backed positive bridge and a
+minimum predicted-quality floor. Popularity remains unavailable in the stored
+metadata schema.
 
 ## Proposed Recommendation Engine v2
 
@@ -110,7 +114,7 @@ This is recommendation feedback, not a second movie diary. Letterboxd remains
 the source of truth for watched movies and ratings. The first use of these events
 should be evaluation, not automatic weight changes.
 
-### 3. Time-ordered evaluation
+### 3. Time-ordered evaluation — implemented
 
 Sort rated movies by their available Letterboxd date and repeatedly train only
 on earlier ratings. Evaluate later ratings with:
@@ -143,7 +147,7 @@ same named, explainable feature groups already visible in the UI. Constraints:
 This remains interpretable: an explanation can still say exactly which signals
 contributed and how much.
 
-### 5. Better Safe, Risky, and Wildcard policies
+### 5. Better Safe, Risky, and Wildcard policies — implemented baseline
 
 - **Safe:** high predicted fit, high evidence confidence, low disagreement
   between strong components.
@@ -188,8 +192,9 @@ never let an LLM invent a preference.
 1. **Complete:** deterministic diversity reranking with a relevance floor and
    non-redundant-slate tests.
 2. Add local, exportable recommendation-event records and a clear-data path.
-3. Add rolling temporal evaluation alongside the existing leave-one-out report.
-4. Compare the current weights against a regularized fitted variant on the
-   user's actual history.
-5. Expand Wildcard distance and display its positive bridge and novelty reason.
+3. **Complete:** rolling temporal evaluation alongside leave-one-out.
+4. **Complete:** conservative baseline-first weights informed by the temporal
+   ablation; richer signals remain bounded corrections.
+5. **Complete:** multidimensional Wildcard distance with a positive bridge,
+   quality floor, and explicit novelty reason.
 6. Revisit embeddings only after these changes have measurable results.

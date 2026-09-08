@@ -155,17 +155,20 @@ The engine:
 8. exposes concise real contributions as the explanation and a full breakdown
    in development.
 
-Safe, Risky, and Wildcard should use different objectives:
+Safe, Risky, and Wildcard use different objectives:
 
 - **Safe** maximizes predicted fit and confidence.
 - **Risky** balances predicted fit with uncertainty and under-sampled regions.
-- **Wildcard** requires meaningful distance from normal viewing while preserving at least one strong positive taste signal.
+- **Wildcard** uses distance across genre, country, language, decade, runtime,
+  and themes while preserving at least one confidence-backed positive taste
+  signal and a minimum quality floor.
 
 ## Offline evaluation
 
-The development-only evaluator runs leave-one-out validation entirely in the
-browser. For each rated film it rebuilds the profile without that film, predicts
-the held-out rating, and reports mean absolute error, Pearson correlation,
+The development-only evaluator runs a primary rolling temporal backtest
+entirely in the browser. Each prediction trains only on earlier dated ratings,
+preventing later taste from leaking into the past. Leave-one-out remains a
+secondary comparison. Both report mean absolute error, Pearson correlation,
 liked-versus-disliked ranking accuracy, top-quartile precision, and pairwise
 ranking accuracy. A cumulative ablation table compares genres/decades with
 directors, origin, keywords, genre combinations, runtime, cast, interactions,
@@ -180,8 +183,13 @@ app startup or recommendations.
 4. **TMDB matching — complete baseline**: device-local credential, direct TMDB
    requests, resumable enrichment, cache, progress, conservative ambiguity
    handling, and poster rendering.
-5. **Metadata-backed Taste and Tonight — in progress**: genre taste, runtime, moods, energy, and company now affect scoring. Country, language, director, and deeper interaction statistics remain later work.
-6. **Only then**: embeddings, natural-language parsing, interaction effects, and optional cross-device sync.
+5. **Metadata-backed Taste and Tonight — complete baseline**: genre and genre
+   combination taste, runtime, moods, energy, company, country, language,
+   director, keywords, cast, and conservative interaction lift now affect or
+   inform scoring. Temporal evaluation keeps weak secondary signals from
+   overwhelming the proven genre/decade baseline.
+6. **Only then**: embeddings, natural-language parsing, adaptive learning from
+   prediction errors, and optional cross-device sync.
 
 ## Risks and assumptions
 

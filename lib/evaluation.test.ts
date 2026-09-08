@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { runOfflineEvaluation } from '@/lib/evaluation';
+import { runOfflineEvaluation, runTemporalEvaluation } from '@/lib/evaluation';
 import type { MovieLibrary, MovieMetadata, WatchedMovie } from '@/lib/types';
 
-function movie(id: string, rating: number): WatchedMovie {
+function movie(
+  id: string,
+  rating: number,
+  watchedDate: string | null = null,
+): WatchedMovie {
   const metadata: MovieMetadata = {
     movieKey: id,
     provider: 'tmdb',
@@ -33,7 +37,7 @@ function movie(id: string, rating: number): WatchedMovie {
     year: 2020,
     letterboxdUri: null,
     rating,
-    watchedDate: null,
+    watchedDate,
     sources: ['ratings'],
     metadata,
     posterUrl: null,
@@ -79,5 +83,51 @@ describe('offline evaluation', () => {
     expect(
       result.metrics.every((metric) => metric.meanAbsoluteError !== null),
     ).toBe(true);
+  });
+
+  it('uses only earlier ratings in the time-ordered backtest', () => {
+    const chronological = library(5);
+    chronological.watched = chronological.watched.map((item, index) => ({
+      ...item,
+      watchedDate: `2025-${String(index + 1).padStart(2, '0')}-01`,
+    }));
+    const changedFuture = {
+      ...chronological,
+      watched: chronological.watched.map((item, index) =>
+        index === chronological.watched.length - 1
+          ? { ...item, rating: 0.5 }
+          : item,
+      ),
+    };
+
+    const first = runTemporalEvaluation(chronological, {
+      minimumTrainingSize: 3,
+    });
+    const second = runTemporalEvaluation(changedFuture, {
+      minimumTrainingSize: 3,
+    });
+    const targetId = chronological.watched[4].id;
+
+    expect(first.method).toBe('time-ordered');
+    expect(first.predictions.length).toBeGreaterThan(0);
+    expect(
+      first.predictions.find(({ movieId }) => movieId === targetId),
+    ).toEqual(second.predictions.find(({ movieId }) => movieId === targetId));
+  });
+
+  it('excludes undated ratings from temporal predictions', () => {
+    const source = library(5);
+    source.watched = source.watched.map((item, index) => ({
+      ...item,
+      watchedDate:
+        index === 0 ? null : `2025-01-${String(index).padStart(2, '0')}`,
+    }));
+
+    const result = runTemporalEvaluation(source, { minimumTrainingSize: 3 });
+
+    expect(result.datedMovies).toBe(source.watched.length - 1);
+    expect(result.predictions.some(({ movieId }) => movieId === 'unique')).toBe(
+      false,
+    );
   });
 });

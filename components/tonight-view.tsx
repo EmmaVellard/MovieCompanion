@@ -78,14 +78,14 @@ const surpriseModes = [
   {
     value: 'risky' as const,
     label: 'Risky Pick',
-    description: 'A positive signal with more uncertainty around it.',
+    description: 'A real positive signal with uncertainty or disagreement.',
     icon: Dice5,
   },
   {
     value: 'wildcard' as const,
     label: 'Wildcard',
     description:
-      'Outside your usual era, with one real bridge back to your taste.',
+      'Outside several familiar habits, with one real bridge to your taste.',
     icon: Compass,
   },
 ];
@@ -190,7 +190,11 @@ export function TonightView({
     setSurpriseMessage(
       result
         ? null
-        : 'The current year-only model could not find a responsible Wildcard. Metadata enrichment will create better bridges.',
+        : mode === 'wildcard'
+          ? 'No responsible Wildcard has both enough novelty and a positive taste bridge yet. More confirmed metadata may reveal one.'
+          : mode === 'risky'
+            ? 'No uncertain movie with a supported positive signal is available right now.'
+            : 'No unwatched watchlist movie is available for this mode.',
     );
     if (result) {
       setRecommendationHistory((current) => [...current, result.movie.id]);
@@ -719,6 +723,12 @@ function RecommendationDialog({
                       {Math.round(recommendation.signals.tonightScore * 100)}
                       {' · '}Final{' '}
                       {Math.round(recommendation.signals.finalScore * 100)}
+                    </p>
+                    <p className="mt-1">
+                      Evidence agreement{' '}
+                      {Math.round(recommendation.signals.signalAgreement * 100)}
+                      {' · '}Habit distance{' '}
+                      {Math.round(recommendation.signals.habitDistance * 100)}
                     </p>
                     <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
                       {recommendation.signals.tasteComponents.map(

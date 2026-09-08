@@ -12,7 +12,8 @@ import {
 
 import { Button } from '@/components/ui/button';
 import {
-  runOfflineEvaluation,
+  runEvaluationSuite,
+  type EvaluationSuiteResult,
   type OfflineEvaluationResult,
 } from '@/lib/evaluation';
 import type {
@@ -47,7 +48,7 @@ export function TasteView({
   loading: boolean;
   onImport: () => void;
 }) {
-  const [evaluation, setEvaluation] = useState<OfflineEvaluationResult | null>(
+  const [evaluation, setEvaluation] = useState<EvaluationSuiteResult | null>(
     null,
   );
   const [evaluating, setEvaluating] = useState(false);
@@ -90,11 +91,11 @@ export function TasteView({
   function evaluate() {
     setEvaluating(true);
     window.setTimeout(() => {
-      const result = runOfflineEvaluation(library);
+      const result = runEvaluationSuite(library);
       setEvaluation(result);
       setEvaluating(false);
       if (process.env.NODE_ENV !== 'production') {
-        console.table(result.metrics);
+        console.table(result.temporal.metrics);
       }
     }, 20);
   }
@@ -348,7 +349,13 @@ function topSupported(stats: TasteStat[], minimumSamples: number) {
     .slice(0, 3);
 }
 
-function DimensionList({ title, stats }: { title: string; stats: TasteStat[] }) {
+function DimensionList({
+  title,
+  stats,
+}: {
+  title: string;
+  stats: TasteStat[];
+}) {
   return (
     <div>
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">
@@ -384,7 +391,7 @@ function EvaluationPanel({
   onRun,
   canRun,
 }: {
-  result: OfflineEvaluationResult | null;
+  result: EvaluationSuiteResult | null;
   evaluating: boolean;
   onRun: () => void;
   canRun: boolean;
@@ -398,9 +405,9 @@ function EvaluationPanel({
         </span>
       </summary>
       <p className="mt-4 max-w-2xl text-xs leading-5 text-muted-foreground">
-        Leave-one-out validation rebuilds the profile without each film before
-        predicting it. This can take a moment, runs only on this device, and
-        sends no additional data anywhere.
+        The primary backtest trains only on earlier ratings before predicting a
+        later one. Leave-one-out remains available as a secondary comparison.
+        Both run only on this device and send no additional data anywhere.
       </p>
       <Button
         variant="outline"
@@ -411,48 +418,92 @@ function EvaluationPanel({
         {evaluating ? 'Evaluating…' : 'Run local evaluation'}
       </Button>
       {result && (
-        <div className="mt-5 overflow-x-auto">
-          <p className="mb-3 text-xs text-muted-foreground">
-            {result.ratedMovies} rated · {result.matchedMovies} with confirmed
-            metadata
-          </p>
-          <table className="w-full min-w-[760px] text-left text-xs">
-            <thead className="text-muted-foreground">
-              <tr className="border-b border-border">
-                <th className="py-2 pr-4 font-medium">Model</th>
-                <th className="py-2 pr-4 font-medium">MAE ↓</th>
-                <th className="py-2 pr-4 font-medium">Correlation ↑</th>
-                <th className="py-2 pr-4 font-medium">Liked over disliked ↑</th>
-                <th className="py-2 pr-4 font-medium">Top-quarter liked ↑</th>
-                <th className="py-2 font-medium">Pairwise rank ↑</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.metrics.map((metric) => (
-                <tr key={metric.variant} className="border-b border-border/70">
-                  <td className="py-2.5 pr-4 font-medium">{metric.variant}</td>
-                  <td className="py-2.5 pr-4">
-                    {metric.meanAbsoluteError?.toFixed(2) ?? '—'}
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    {metric.pearsonCorrelation?.toFixed(2) ?? '—'}
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    {percent(metric.likedVsDislikedAccuracy)}
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    {percent(metric.topQuartilePrecision)}
-                  </td>
-                  <td className="py-2.5">
-                    {percent(metric.pairwiseRankingAccuracy)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-5 space-y-6">
+          <EvaluationTable
+            title="Time-ordered backtest"
+            description="Most realistic: every prediction uses only ratings recorded earlier."
+            result={result.temporal}
+          />
+          <details className="rounded-xl border border-border bg-background/35 p-4">
+            <summary className="cursor-pointer text-xs font-medium">
+              Secondary leave-one-out comparison
+            </summary>
+            <div className="mt-4">
+              <EvaluationTable
+                title="Leave-one-out"
+                description="Useful for data efficiency, but later ratings can influence earlier predictions."
+                result={result.leaveOneOut}
+              />
+            </div>
+          </details>
         </div>
       )}
     </details>
+  );
+}
+
+function EvaluationTable({
+  title,
+  description,
+  result,
+}: {
+  title: string;
+  description: string;
+  result: OfflineEvaluationResult;
+}) {
+  const evaluated = result.predictions.length;
+  return (
+    <div className="overflow-x-auto">
+      <p className="text-xs font-semibold">{title}</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+        {description}
+      </p>
+      <p className="my-3 text-xs text-muted-foreground">
+        {evaluated} evaluated · {result.datedMovies} dated ·{' '}
+        {result.matchedMovies} with confirmed metadata
+      </p>
+      {evaluated > 0 ? (
+        <table className="w-full min-w-[760px] text-left text-xs">
+          <thead className="text-muted-foreground">
+            <tr className="border-b border-border">
+              <th className="py-2 pr-4 font-medium">Model</th>
+              <th className="py-2 pr-4 font-medium">MAE ↓</th>
+              <th className="py-2 pr-4 font-medium">Correlation ↑</th>
+              <th className="py-2 pr-4 font-medium">Liked over disliked ↑</th>
+              <th className="py-2 pr-4 font-medium">Top-quarter liked ↑</th>
+              <th className="py-2 font-medium">Pairwise rank ↑</th>
+            </tr>
+          </thead>
+          <tbody>
+            {result.metrics.map((metric) => (
+              <tr key={metric.variant} className="border-b border-border/70">
+                <td className="py-2.5 pr-4 font-medium">{metric.variant}</td>
+                <td className="py-2.5 pr-4">
+                  {metric.meanAbsoluteError?.toFixed(2) ?? '—'}
+                </td>
+                <td className="py-2.5 pr-4">
+                  {metric.pearsonCorrelation?.toFixed(2) ?? '—'}
+                </td>
+                <td className="py-2.5 pr-4">
+                  {percent(metric.likedVsDislikedAccuracy)}
+                </td>
+                <td className="py-2.5 pr-4">
+                  {percent(metric.topQuartilePrecision)}
+                </td>
+                <td className="py-2.5">
+                  {percent(metric.pairwiseRankingAccuracy)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="rounded-xl border border-border bg-background/35 p-3 text-xs leading-5 text-muted-foreground">
+          Not enough dated ratings yet. Import ratings.csv (or watched.csv) so
+          the model can preserve chronology, then try again.
+        </p>
+      )}
+    </div>
   );
 }
 

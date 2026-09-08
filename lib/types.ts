@@ -129,6 +129,7 @@ export interface WatchedMovie {
   year: number | null;
   letterboxdUri: string | null;
   rating: number | null;
+  ratingDate?: string | null;
   watchedDate: string | null;
   sources: Array<'ratings' | 'watched'>;
   metadata: MovieMetadata | null;
@@ -312,6 +313,9 @@ export interface RecommendationSignals {
   yearSimilarity: number;
   watchlistAge: number;
   habitDistance: number;
+  habitDistanceComponents: HabitDistanceComponent[];
+  positiveBridge: RecommendationBridge | null;
+  signalAgreement: number;
   genreAffinity: number;
   metadataSimilarity: number;
   tasteScore: number;
@@ -319,6 +323,28 @@ export interface RecommendationSignals {
   finalScore: number;
   tasteComponents: TasteScoreComponent[];
   contributions: RecommendationContribution[];
+}
+
+export type HabitDistanceFeature =
+  | 'genres'
+  | 'countries'
+  | 'language'
+  | 'decade'
+  | 'runtime'
+  | 'keywords';
+
+export interface HabitDistanceComponent {
+  feature: HabitDistanceFeature;
+  distance: number;
+  confidence: number;
+  evidence: string[];
+}
+
+export interface RecommendationBridge {
+  component: TasteScoreComponentName;
+  label: string;
+  score: number;
+  confidence: number;
 }
 
 export type TasteScoreComponentName =

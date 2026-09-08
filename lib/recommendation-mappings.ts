@@ -9,6 +9,8 @@ import type {
 interface MoodDefinition {
   genres: string[];
   terms: string[];
+  antiGenres?: string[];
+  antiTerms?: string[];
 }
 
 export interface ContextSignal {
@@ -28,11 +30,24 @@ export const MOOD_MAPPINGS: Record<RecommendationMood, MoodDefinition> = {
       'hostage',
       'revenge',
       'conspiracy',
+      'obsession',
+      'tension',
     ],
   },
   fun: {
     genres: ['comedy', 'adventure', 'action', 'music'],
-    terms: ['buddy', 'heist', 'road trip', 'feel-good', 'party', 'musical'],
+    terms: [
+      'buddy',
+      'heist',
+      'road trip',
+      'feel-good',
+      'party',
+      'musical',
+      'caper',
+      'satire',
+    ],
+    antiGenres: ['war'],
+    antiTerms: ['torture', 'terminal illness', 'suicide', 'holocaust'],
   },
   comforting: {
     genres: ['family', 'comedy', 'romance', 'animation'],
@@ -43,11 +58,24 @@ export const MOOD_MAPPINGS: Record<RecommendationMood, MoodDefinition> = {
       'found family',
       'holiday',
       'slice of life',
+      'food',
+      'small town',
     ],
+    antiGenres: ['horror', 'war'],
+    antiTerms: ['serial killer', 'torture', 'bleak', 'abuse', 'apocalypse'],
   },
   emotional: {
     genres: ['drama', 'romance', 'family'],
-    terms: ['grief', 'family', 'love', 'loss', 'parenthood', 'reunion'],
+    terms: [
+      'grief',
+      'family',
+      'love',
+      'loss',
+      'parenthood',
+      'reunion',
+      'friendship',
+      'coming of age',
+    ],
   },
   weird: {
     genres: ['fantasy', 'science fiction', 'mystery'],
@@ -58,6 +86,7 @@ export const MOOD_MAPPINGS: Record<RecommendationMood, MoodDefinition> = {
       'experimental',
       'alternate reality',
       'hallucination',
+      'metafiction',
     ],
   },
   'visually-beautiful': {
@@ -69,6 +98,8 @@ export const MOOD_MAPPINGS: Record<RecommendationMood, MoodDefinition> = {
       'painterly',
       'landscape',
       'natural beauty',
+      'art',
+      'fashion',
     ],
   },
   suspenseful: {
@@ -80,6 +111,7 @@ export const MOOD_MAPPINGS: Record<RecommendationMood, MoodDefinition> = {
       'murder mystery',
       'conspiracy',
       'cat and mouse',
+      'missing person',
     ],
   },
   'thought-provoking': {
@@ -93,6 +125,7 @@ export const MOOD_MAPPINGS: Record<RecommendationMood, MoodDefinition> = {
       'existential',
       'politics',
       'morality',
+      'human nature',
     ],
   },
 };
@@ -125,7 +158,12 @@ const ENERGY_MAPPINGS = {
 
 const COMPANY_MAPPINGS = {
   friends: ['comedy', 'horror', 'action', 'adventure'],
-  date: ['romance', 'comedy', 'drama'],
+  date: ['romance', 'comedy'],
+} as const;
+
+const COMPANY_TERMS = {
+  friends: ['buddy', 'party', 'heist', 'competition', 'road trip'],
+  date: ['love', 'relationship', 'romance', 'wedding', 'cinematography'],
 } as const;
 
 function clamp(value: number) {
@@ -159,17 +197,22 @@ export function scoreMood(
   const definition = MOOD_MAPPINGS[mood];
   const matchedGenres = genreMatches(metadata, definition.genres);
   const matchedTerms = termMatches(metadata, definition.terms);
+  const antiGenres = genreMatches(metadata, definition.antiGenres ?? []);
+  const antiTerms = termMatches(metadata, definition.antiTerms ?? []);
   const hasExplicitSignal = matchedGenres.length + matchedTerms.length > 0;
   const score = clamp(
-    0.14 +
-      Math.min(0.58, matchedGenres.length * 0.34) +
-      Math.min(0.28, matchedTerms.length * 0.18),
+    0.32 +
+      Math.min(0.4, matchedGenres.length * 0.24) +
+      Math.min(0.34, matchedTerms.length * 0.18) -
+      Math.min(0.42, antiGenres.length * 0.2 + antiTerms.length * 0.16),
   );
   return {
     score,
     matches: [...matchedGenres, ...matchedTerms].slice(0, 3),
     available:
-      mood === 'visually-beautiful' ? hasExplicitSignal : metadata.genres.length > 0,
+      mood === 'visually-beautiful'
+        ? hasExplicitSignal
+        : metadata.genres.length > 0,
   };
 }
 
@@ -177,13 +220,17 @@ export function scoreEnergy(
   metadataValue: MovieMetadata | null,
   energy: EnergyLevel,
 ): ContextSignal {
-  if (energy === 'normal') return { score: 0.5, matches: ['normal'], available: true };
+  if (energy === 'normal')
+    return { score: 0.5, matches: ['normal'], available: true };
   const metadata = usable(metadataValue);
   if (!metadata) return { score: 0.3, matches: [], available: false };
 
   if (energy === 'easy') {
     const matchedGenres = genreMatches(metadata, ENERGY_MAPPINGS.easy.genres);
-    const demanding = termMatches(metadata, ENERGY_MAPPINGS.easy.demandingTerms);
+    const demanding = termMatches(
+      metadata,
+      ENERGY_MAPPINGS.easy.demandingTerms,
+    );
     const runtimeBoost =
       metadata.runtimeMinutes === null
         ? 0
@@ -196,9 +243,15 @@ export function scoreEnergy(
               : 0;
     return {
       score: clamp(
-        0.3 + Math.min(0.48, matchedGenres.length * 0.3) + runtimeBoost - demanding.length * 0.2,
+        0.36 +
+          Math.min(0.38, matchedGenres.length * 0.22) +
+          runtimeBoost -
+          Math.min(0.4, demanding.length * 0.18),
       ),
-      matches: [...matchedGenres, ...(runtimeBoost > 0 ? ['shorter runtime'] : [])].slice(0, 3),
+      matches: [
+        ...matchedGenres,
+        ...(runtimeBoost > 0 ? ['shorter runtime'] : []),
+      ].slice(0, 3),
       available: metadata.genres.length > 0 || metadata.runtimeMinutes !== null,
     };
   }
@@ -213,9 +266,12 @@ export function scoreEnergy(
   );
   return {
     score: clamp(
-      0.28 +
-        Math.min(0.48, matchedGenres.length * 0.24) +
-        Math.min(0.26, matchedTerms.length * 0.16),
+      0.36 +
+        Math.min(0.34, matchedGenres.length * 0.17) +
+        Math.min(0.38, matchedTerms.length * 0.19) +
+        (metadata.runtimeMinutes !== null && metadata.runtimeMinutes >= 135
+          ? 0.06
+          : 0),
     ),
     matches: [...matchedGenres, ...matchedTerms].slice(0, 3),
     available: metadata.genres.length > 0,
@@ -232,17 +288,14 @@ export function scoreCompany(
   const metadata = usable(metadataValue);
   if (!metadata) return { score: 0.35, matches: [], available: false };
   const matchedGenres = genreMatches(metadata, COMPANY_MAPPINGS[company]);
-  const visualTerms =
-    company === 'date'
-      ? termMatches(metadata, MOOD_MAPPINGS['visually-beautiful'].terms)
-      : [];
+  const matchedTerms = termMatches(metadata, COMPANY_TERMS[company]);
   return {
     score: clamp(
-      0.28 +
-        Math.min(0.58, matchedGenres.length * 0.31) +
-        Math.min(0.14, visualTerms.length * 0.1),
+      0.36 +
+        Math.min(0.44, matchedGenres.length * 0.24) +
+        Math.min(0.28, matchedTerms.length * 0.14),
     ),
-    matches: [...matchedGenres, ...visualTerms].slice(0, 3),
+    matches: [...matchedGenres, ...matchedTerms].slice(0, 3),
     available: metadata.genres.length > 0,
   };
 }
@@ -251,7 +304,8 @@ export function scoreRuntime(
   metadataValue: MovieMetadata | null,
   limit: RuntimeLimit,
 ): ContextSignal {
-  if (limit === null) return { score: 0.5, matches: ['no limit'], available: true };
+  if (limit === null)
+    return { score: 0.5, matches: ['no limit'], available: true };
   const metadata = usable(metadataValue);
   if (!metadata || metadata.runtimeMinutes === null) {
     return { score: 0, matches: [], available: false };

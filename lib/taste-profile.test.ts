@@ -177,6 +177,34 @@ describe('Taste Profile v2', () => {
     ).toBe(false);
   });
 
+  it('scores a genre combination as lift beyond its parent genres', () => {
+    const profile = buildTasteProfile(
+      library([
+        ...Array.from({ length: 4 }, (_, index) =>
+          rated(`combo-${index}`, 5, { genres: ['Crime', 'Mystery'] }),
+        ),
+        ...Array.from({ length: 4 }, (_, index) =>
+          rated(`crime-${index}`, 2, { genres: ['Crime'] }),
+        ),
+        ...Array.from({ length: 4 }, (_, index) =>
+          rated(`mystery-${index}`, 2, { genres: ['Mystery'] }),
+        ),
+      ]),
+    );
+    const scored = scorePersonalTaste(
+      candidate('candidate', { genres: ['Crime', 'Mystery'] }),
+      profile,
+    );
+    const genres = scored.components.find((item) => item.name === 'genres');
+    const combination = scored.components.find(
+      (item) => item.name === 'genre combinations',
+    );
+
+    expect(combination?.confidence).toBeGreaterThan(0);
+    expect(combination?.score).toBeGreaterThan(genres?.score ?? 1);
+    expect(combination?.evidence[0]).toContain('Crime + Mystery');
+  });
+
   it('caps selected interaction patterns to prevent combinatorial growth', () => {
     const watched = Array.from({ length: 12 }, (_, index) =>
       rated(`dense-${index}`, index < 6 ? 5 : 2, {
@@ -209,8 +237,8 @@ describe('Taste Profile v2', () => {
     expect(profile.genres).toHaveLength(0);
     expect(profile.metadataCoverage.matchedRatedMovies).toBe(0);
     expect(Number.isFinite(scored.tasteScore)).toBe(true);
-    expect(scored.components.every((component) => component.evidence.length <= 1)).toBe(
-      true,
-    );
+    expect(
+      scored.components.every((component) => component.evidence.length <= 1),
+    ).toBe(true);
   });
 });

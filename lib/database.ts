@@ -219,6 +219,8 @@ export async function getMovieLibrary(): Promise<MovieLibrary> {
       letterboxdUri: record.letterboxdUri ?? current?.letterboxdUri ?? null,
       rating:
         record.kind === 'ratings' ? record.rating : (current?.rating ?? null),
+      ratingDate:
+        record.kind === 'ratings' ? record.date : (current?.ratingDate ?? null),
       watchedDate:
         record.kind === 'watched'
           ? record.date

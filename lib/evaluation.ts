@@ -40,11 +40,19 @@ export interface HeldOutPrediction {
 }
 
 export interface OfflineEvaluationResult {
-  method: 'leave-one-out';
+  method: 'leave-one-out' | 'time-ordered';
   ratedMovies: number;
+  datedMovies: number;
   matchedMovies: number;
+  skippedMovies: number;
+  minimumTrainingSize: number;
   metrics: EvaluationMetrics[];
   predictions: HeldOutPrediction[];
+}
+
+export interface EvaluationSuiteResult {
+  temporal: OfflineEvaluationResult;
+  leaveOneOut: OfflineEvaluationResult;
 }
 
 const VARIANT_COMPONENTS: Record<EvaluationVariant, TasteScoreComponentName[]> =
@@ -64,56 +72,56 @@ const VARIANT_COMPONENTS: Record<EvaluationVariant, TasteScoreComponentName[]> =
       'country and language',
       'keywords',
     ],
-  '+ Genre combinations': [
+    '+ Genre combinations': [
       'genres',
       'decade',
       'director',
       'country and language',
       'keywords',
-    'genre combinations',
-  ],
-  '+ Runtime': [
-    'genres',
-    'decade',
-    'director',
-    'country and language',
-    'keywords',
-    'genre combinations',
-    'runtime',
-  ],
-  '+ Cast': [
-    'genres',
-    'decade',
-    'director',
-    'country and language',
-    'keywords',
-    'genre combinations',
-    'runtime',
-    'cast',
-  ],
-  '+ Interaction patterns': [
-    'genres',
-    'decade',
-    'director',
-    'country and language',
-    'keywords',
-    'genre combinations',
-    'runtime',
-    'cast',
-    'interaction patterns',
-  ],
-  '+ Richer similarity': [
-    'genres',
-    'decade',
-    'director',
-    'country and language',
-    'keywords',
-    'genre combinations',
-    'runtime',
-    'cast',
-    'interaction patterns',
-    'similarity',
-  ],
+      'genre combinations',
+    ],
+    '+ Runtime': [
+      'genres',
+      'decade',
+      'director',
+      'country and language',
+      'keywords',
+      'genre combinations',
+      'runtime',
+    ],
+    '+ Cast': [
+      'genres',
+      'decade',
+      'director',
+      'country and language',
+      'keywords',
+      'genre combinations',
+      'runtime',
+      'cast',
+    ],
+    '+ Interaction patterns': [
+      'genres',
+      'decade',
+      'director',
+      'country and language',
+      'keywords',
+      'genre combinations',
+      'runtime',
+      'cast',
+      'interaction patterns',
+    ],
+    '+ Richer similarity': [
+      'genres',
+      'decade',
+      'director',
+      'country and language',
+      'keywords',
+      'genre combinations',
+      'runtime',
+      'cast',
+      'interaction patterns',
+      'similarity',
+    ],
     'Personal Taste v2': [
       'genres',
       'genre combinations',
@@ -263,6 +271,71 @@ function metricsFor(
   };
 }
 
+function predictHeldOut(
+  heldOut: WatchedMovie & { rating: number },
+  trainingMovies: Array<WatchedMovie & { rating: number }>,
+  tmdbImageConfiguration: MovieLibrary['tmdbImageConfiguration'],
+) {
+  const trainingLibrary: MovieLibrary = {
+    watched: trainingMovies,
+    watchlist: [],
+    tmdbImageConfiguration,
+  };
+  const profile = buildTasteProfile(trainingLibrary);
+  if (profile.overallAverage === null) return null;
+  const scored = scorePersonalTaste(heldOut, profile);
+  const baseline = baselineComponents(heldOut, profile);
+  const variantPredictions = {} as Record<EvaluationVariant, number>;
+  for (const [variant, included] of Object.entries(VARIANT_COMPONENTS) as Array<
+    [EvaluationVariant, TasteScoreComponentName[]]
+  >) {
+    if (variant === 'Genres + decades') {
+      variantPredictions[variant] =
+        1 + (baseline.genres * 0.65 + baseline.decades * 0.35) * 4;
+    } else {
+      variantPredictions[variant] = predictedRating(
+        scored.components,
+        included,
+        profile,
+      );
+    }
+  }
+  return {
+    movieId: heldOut.id,
+    title: heldOut.title,
+    actualRating: heldOut.rating,
+    predictions: variantPredictions,
+  } satisfies HeldOutPrediction;
+}
+
+function buildResult({
+  method,
+  rated,
+  datedMovies,
+  matchedMovies,
+  predictions,
+  minimumTrainingSize,
+}: {
+  method: OfflineEvaluationResult['method'];
+  rated: Array<WatchedMovie & { rating: number }>;
+  datedMovies: number;
+  matchedMovies: number;
+  predictions: HeldOutPrediction[];
+  minimumTrainingSize: number;
+}): OfflineEvaluationResult {
+  const variants = Object.keys(VARIANT_COMPONENTS) as EvaluationVariant[];
+  return {
+    method,
+    ratedMovies: rated.length,
+    datedMovies,
+    matchedMovies,
+    skippedMovies: rated.length - predictions.length,
+    minimumTrainingSize,
+    metrics: variants.map((variant) => metricsFor(variant, predictions)),
+    predictions,
+  };
+}
+
 export function runOfflineEvaluation(
   library: MovieLibrary,
 ): OfflineEvaluationResult {
@@ -273,45 +346,86 @@ export function runOfflineEvaluation(
   const predictions: HeldOutPrediction[] = [];
   for (let heldOutIndex = 0; heldOutIndex < rated.length; heldOutIndex += 1) {
     const heldOut = rated[heldOutIndex];
-    const trainingLibrary: MovieLibrary = {
-      watched: rated.filter((_, index) => index !== heldOutIndex),
-      watchlist: [],
-      tmdbImageConfiguration: library.tmdbImageConfiguration,
-    };
-    const profile = buildTasteProfile(trainingLibrary);
-    if (profile.overallAverage === null) continue;
-    const scored = scorePersonalTaste(heldOut, profile);
-    const baseline = baselineComponents(heldOut, profile);
-    const variantPredictions = {} as Record<EvaluationVariant, number>;
-    for (const [variant, included] of Object.entries(
-      VARIANT_COMPONENTS,
-    ) as Array<[EvaluationVariant, TasteScoreComponentName[]]>) {
-      if (variant === 'Genres + decades') {
-        variantPredictions[variant] =
-          1 + (baseline.genres * 0.65 + baseline.decades * 0.35) * 4;
-      } else {
-        variantPredictions[variant] = predictedRating(
-          scored.components,
-          included,
-          profile,
-        );
-      }
-    }
-    predictions.push({
-      movieId: heldOut.id,
-      title: heldOut.title,
-      actualRating: heldOut.rating,
-      predictions: variantPredictions,
-    });
+    const prediction = predictHeldOut(
+      heldOut,
+      rated.filter((_, index) => index !== heldOutIndex),
+      library.tmdbImageConfiguration,
+    );
+    if (prediction) predictions.push(prediction);
   }
 
-  const variants = Object.keys(VARIANT_COMPONENTS) as EvaluationVariant[];
-  return {
+  return buildResult({
     method: 'leave-one-out',
-    ratedMovies: rated.length,
+    rated,
+    datedMovies: rated.filter((movie) => Boolean(movie.watchedDate)).length,
     matchedMovies: rated.filter((movie) => movie.metadata?.status === 'matched')
       .length,
-    metrics: variants.map((variant) => metricsFor(variant, predictions)),
     predictions,
+    minimumTrainingSize: Math.max(0, rated.length - 1),
+  });
+}
+
+function activityTimestamp(movie: WatchedMovie) {
+  const activityDate = movie.ratingDate ?? movie.watchedDate;
+  if (!activityDate) return null;
+  const timestamp = Date.parse(activityDate);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+export function runTemporalEvaluation(
+  library: MovieLibrary,
+  { minimumTrainingSize = 12 }: { minimumTrainingSize?: number } = {},
+): OfflineEvaluationResult {
+  const rated = library.watched.filter(
+    (movie): movie is WatchedMovie & { rating: number } =>
+      movie.rating !== null,
+  );
+  const dated = rated
+    .map((movie) => ({ movie, timestamp: activityTimestamp(movie) }))
+    .filter(
+      (
+        entry,
+      ): entry is {
+        movie: WatchedMovie & { rating: number };
+        timestamp: number;
+      } => entry.timestamp !== null,
+    )
+    .sort(
+      (a, b) =>
+        a.timestamp - b.timestamp || a.movie.title.localeCompare(b.movie.title),
+    );
+  const predictions: HeldOutPrediction[] = [];
+
+  for (const heldOut of dated) {
+    const trainingMovies = dated
+      .filter((entry) => entry.timestamp < heldOut.timestamp)
+      .map((entry) => entry.movie);
+    if (trainingMovies.length < minimumTrainingSize) continue;
+    const prediction = predictHeldOut(
+      heldOut.movie,
+      trainingMovies,
+      library.tmdbImageConfiguration,
+    );
+    if (prediction) predictions.push(prediction);
+  }
+
+  return buildResult({
+    method: 'time-ordered',
+    rated,
+    datedMovies: dated.length,
+    matchedMovies: dated.filter(
+      ({ movie }) => movie.metadata?.status === 'matched',
+    ).length,
+    predictions,
+    minimumTrainingSize,
+  });
+}
+
+export function runEvaluationSuite(
+  library: MovieLibrary,
+): EvaluationSuiteResult {
+  return {
+    temporal: runTemporalEvaluation(library),
+    leaveOneOut: runOfflineEvaluation(library),
   };
 }

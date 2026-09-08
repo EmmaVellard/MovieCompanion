@@ -7,11 +7,14 @@ import {
 } from '@/lib/recommendation-mappings';
 import { extractMovieFeatures } from '@/lib/movie-features';
 import { movieSimilarity } from '@/lib/movie-similarity';
-import { affinityFromStats, clamp } from '@/lib/statistics';
+import { affinityFromStats, average, clamp } from '@/lib/statistics';
 import { formatDecade } from '@/lib/taste-profile';
 import type {
   MovieLibrary,
+  MovieFeatures,
   MovieRecommendation,
+  HabitDistanceComponent,
+  RecommendationBridge,
   RecommendationContext,
   RecommendationContribution,
   RecommendationMode,
@@ -38,23 +41,27 @@ interface TasteSignals {
   evidenceConfidence: number;
   watchlistAge: number;
   habitDistance: number;
+  habitDistanceComponents: HabitDistanceComponent[];
+  positiveBridge: RecommendationBridge | null;
+  signalAgreement: number;
+  neutralScore: number;
   tasteScore: number;
   tasteComponents: TasteScoreComponent[];
   contributions: RecommendationContribution[];
 }
 
 export const PERSONAL_TASTE_WEIGHTS: Record<TasteScoreComponentName, number> = {
-  genres: 0.22,
-  'genre combinations': 0.12,
-  keywords: 0.06,
-  director: 0.13,
-  cast: 0.01,
-  'country and language': 0.06,
-  decade: 0.14,
-  runtime: 0.16,
-  'interaction patterns': 0.025,
-  similarity: 0.025,
-  'evidence confidence': 0.05,
+  genres: 0.51,
+  'genre combinations': 0.015,
+  keywords: 0.02,
+  director: 0.02,
+  cast: 0,
+  'country and language': 0.015,
+  decade: 0.29,
+  runtime: 0.12,
+  'interaction patterns': 0.005,
+  similarity: 0.005,
+  'evidence confidence': 0,
 };
 
 interface CandidateScore {
@@ -73,6 +80,18 @@ interface CandidateScore {
 
 const DIVERSITY_PENALTY = 0.12;
 const DIVERSITY_RELEVANCE_FLOOR = 0.1;
+
+const HABIT_DISTANCE_WEIGHTS: Record<
+  HabitDistanceComponent['feature'],
+  number
+> = {
+  genres: 0.27,
+  countries: 0.14,
+  language: 0.14,
+  decade: 0.15,
+  runtime: 0.12,
+  keywords: 0.18,
+};
 
 function hashUnit(value: string) {
   let hash = 2166136261;
@@ -150,6 +169,48 @@ function combinedAffinity(
   };
 }
 
+function residualAffinity(
+  stats: TasteStat[],
+  expectedDifference: (stat: TasteStat) => number,
+  overallAverage: number,
+  neutralScore: number,
+) {
+  const residualStats = stats.map((stat) => {
+    const residual = stat.regularizedDifference - expectedDifference(stat);
+    return {
+      ...stat,
+      regularizedRating: clamp(overallAverage + residual, 0.5, 5),
+      regularizedDifference: residual,
+    };
+  });
+  return affinityFromStats(residualStats, neutralScore);
+}
+
+function combinationAffinity(
+  profile: TasteProfile,
+  features: MovieFeatures,
+  neutralScore: number,
+) {
+  const combinations = supportedStats(
+    features.genreCombinations,
+    profile.genreCombinations,
+    3,
+  );
+  const genreLookup = new Map(profile.genres.map((stat) => [stat.key, stat]));
+  return residualAffinity(
+    combinations,
+    (combination) => {
+      const parentDifferences = combination.key
+        .split(' + ')
+        .map((genre) => genreLookup.get(genre)?.regularizedDifference)
+        .filter((value): value is number => value !== undefined);
+      return parentDifferences.length > 0 ? average(parentDifferences) : 0;
+    },
+    profile.overallAverage ?? 3,
+    neutralScore,
+  );
+}
+
 function interactionMatches(
   profile: TasteProfile,
   features: ReturnType<typeof extractMovieFeatures>,
@@ -167,6 +228,177 @@ function interactionMatches(
   );
 }
 
+function interactionAffinity(
+  profile: TasteProfile,
+  features: MovieFeatures,
+  neutralScore: number,
+) {
+  const matches = interactionMatches(profile, features);
+  const liftByKey = new Map(
+    matches.map((interaction) => [
+      interaction.key,
+      interaction.interactionLift,
+    ]),
+  );
+  return residualAffinity(
+    matches,
+    (interaction) =>
+      interaction.regularizedDifference - (liftByKey.get(interaction.key) ?? 0),
+    profile.overallAverage ?? 3,
+    neutralScore,
+  );
+}
+
+function strongestPositiveBridge(
+  components: TasteScoreComponent[],
+  neutralScore: number,
+): RecommendationBridge | null {
+  return (
+    components
+      .filter(
+        (component) =>
+          component.name !== 'evidence confidence' &&
+          component.confidence >= 0.12 &&
+          component.score >= neutralScore + 0.025 &&
+          component.evidence.length > 0,
+      )
+      .map((component) => ({
+        component: component.name,
+        label: component.evidence[0],
+        score: clamp(
+          (0.5 + (component.score - neutralScore) * 2) * component.confidence,
+        ),
+        confidence: component.confidence,
+      }))
+      .sort((a, b) => b.score - a.score || b.confidence - a.confidence)[0] ??
+    null
+  );
+}
+
+function componentAgreement(components: TasteScoreComponent[]) {
+  const supported = components.filter(
+    (component) =>
+      component.name !== 'evidence confidence' && component.confidence >= 0.12,
+  );
+  if (supported.length < 2) return 0.5;
+  const totalConfidence = supported.reduce(
+    (total, component) => total + component.confidence,
+    0,
+  );
+  const mean =
+    supported.reduce(
+      (total, component) => total + component.score * component.confidence,
+      0,
+    ) / totalConfidence;
+  const deviation =
+    supported.reduce(
+      (total, component) =>
+        total + Math.abs(component.score - mean) * component.confidence,
+      0,
+    ) / totalConfidence;
+  return clamp(1 - deviation / 0.22);
+}
+
+function habitComponent(
+  feature: HabitDistanceComponent['feature'],
+  keys: string[],
+  stats: TasteStat[],
+  ratedMovieCount: number,
+  commonShare: number,
+): HabitDistanceComponent | null {
+  if (keys.length === 0) return null;
+  const lookup = new Map(stats.map((stat) => [stat.key, stat]));
+  const commonSampleSize = Math.max(3, ratedMovieCount * commonShare);
+  const familiarity = average(
+    keys.map((key) =>
+      clamp((lookup.get(key)?.sampleSize ?? 0) / commonSampleSize),
+    ),
+  );
+  const evidence = [...keys]
+    .sort(
+      (a, b) =>
+        (lookup.get(a)?.sampleSize ?? 0) - (lookup.get(b)?.sampleSize ?? 0),
+    )
+    .slice(0, 2);
+  return {
+    feature,
+    distance: 1 - familiarity,
+    confidence: clamp(ratedMovieCount / 24),
+    evidence,
+  };
+}
+
+export function scoreHabitDistance(
+  features: MovieFeatures,
+  profile: TasteProfile,
+) {
+  const components = [
+    habitComponent(
+      'genres',
+      features.genres,
+      profile.genres,
+      profile.ratedMovieCount,
+      0.22,
+    ),
+    habitComponent(
+      'countries',
+      features.countries,
+      profile.countries,
+      profile.ratedMovieCount,
+      0.16,
+    ),
+    habitComponent(
+      'language',
+      features.language ? [features.language] : [],
+      profile.languages,
+      profile.ratedMovieCount,
+      0.2,
+    ),
+    habitComponent(
+      'decade',
+      features.decade ? [features.decade] : [],
+      profile.decades,
+      profile.ratedMovieCount,
+      0.2,
+    ),
+    habitComponent(
+      'runtime',
+      features.runtimeBand ? [features.runtimeBand] : [],
+      profile.runtimeBands,
+      profile.ratedMovieCount,
+      0.24,
+    ),
+    habitComponent(
+      'keywords',
+      features.keywords.slice(0, 8),
+      profile.keywords,
+      profile.ratedMovieCount,
+      0.1,
+    ),
+  ].filter((component): component is HabitDistanceComponent =>
+    Boolean(component),
+  );
+  const availableWeight = components.reduce(
+    (total, component) => total + HABIT_DISTANCE_WEIGHTS[component.feature],
+    0,
+  );
+  const rawDistance =
+    availableWeight === 0
+      ? 0.5
+      : components.reduce(
+          (total, component) =>
+            total +
+            component.distance * HABIT_DISTANCE_WEIGHTS[component.feature],
+          0,
+        ) / availableWeight;
+  const historyConfidence = clamp(profile.ratedMovieCount / 24);
+  return {
+    score: clamp(0.5 + (rawDistance - 0.5) * historyConfidence),
+    confidence: historyConfidence * clamp(availableWeight),
+    components,
+  };
+}
+
 export function scorePersonalTaste(
   movie: Pick<WatchlistMovie, 'id' | 'title' | 'year' | 'metadata'>,
   profile: TasteProfile,
@@ -176,9 +408,7 @@ export function scorePersonalTaste(
   const affinity = (stats: TasteStat[]) =>
     affinityFromStats(stats, neutralScore);
   const genres = affinity(matchingStats(features.genres, profile.genres));
-  const combinations = affinity(
-    supportedStats(features.genreCombinations, profile.genreCombinations, 3),
-  );
+  const combinations = combinationAffinity(profile, features, neutralScore);
   const keywords = affinity(
     supportedStats(features.keywords, profile.keywords, 3),
   );
@@ -197,7 +427,7 @@ export function scorePersonalTaste(
   const runtime = affinity(
     supportedStats([features.runtimeBand], profile.runtimeBands, 5),
   );
-  const interactions = affinity(interactionMatches(profile, features));
+  const interactions = interactionAffinity(profile, features, neutralScore);
   const closest =
     profile.highRatedMovies
       .filter((ratedMovie) => ratedMovie.id !== movie.id)
@@ -308,6 +538,9 @@ export function scorePersonalTaste(
     genreAffinity: genres.score,
     genreConfidence: genres.confidence,
     evidenceConfidence,
+    positiveBridge: strongestPositiveBridge(components, neutralScore),
+    signalAgreement: componentAgreement(components),
+    neutralScore,
   };
 }
 
@@ -327,10 +560,7 @@ function tasteSignals(
     : 0.5;
   const metadataSimilarity = closest?.similarity.score ?? 0.5;
   const age = watchlistAge(movie.addedDate, nowMs);
-  const habitDistance =
-    movie.year !== null && profile.averageRatedYear !== null
-      ? clamp(Math.abs(movie.year - profile.averageRatedYear) / 45)
-      : 0.5;
+  const habitDistance = scoreHabitDistance(scored.features, profile);
   const contributions: RecommendationContribution[] = scored.components.map(
     (component) => ({
       category: 'taste',
@@ -355,7 +585,11 @@ function tasteSignals(
     genreConfidence: scored.genreConfidence,
     evidenceConfidence: scored.evidenceConfidence,
     watchlistAge: age,
-    habitDistance,
+    habitDistance: habitDistance.score,
+    habitDistanceComponents: habitDistance.components,
+    positiveBridge: scored.positiveBridge,
+    signalAgreement: scored.signalAgreement,
+    neutralScore: scored.neutralScore,
     tasteScore: scored.tasteScore,
     tasteComponents: scored.components,
     contributions,
@@ -423,9 +657,7 @@ function diversityExplanation(
   const runtimeMinutes = features.runtimeMinutes;
   if (
     runtimeMinutes !== null &&
-    selectedRuntimes.some(
-      (runtime) => Math.abs(runtime - runtimeMinutes) >= 30,
-    )
+    selectedRuntimes.some((runtime) => Math.abs(runtime - runtimeMinutes) >= 30)
   ) {
     return `Adds a different pacing option at ${runtimeMinutes} minutes.`;
   }
@@ -588,6 +820,9 @@ function scoreTonightCandidate(
       yearSimilarity: taste.yearSimilarity,
       watchlistAge: taste.watchlistAge,
       habitDistance: taste.habitDistance,
+      habitDistanceComponents: taste.habitDistanceComponents,
+      positiveBridge: taste.positiveBridge,
+      signalAgreement: taste.signalAgreement,
       genreAffinity: taste.genreAffinity,
       metadataSimilarity: taste.metadataSimilarity,
       tasteScore: taste.tasteScore,
@@ -623,6 +858,21 @@ function waitingReason(movie: WatchlistMovie, age: number) {
   return year
     ? `It has been waiting on your watchlist since ${year}.`
     : 'It receives a small boost for waiting on your watchlist.';
+}
+
+function bridgeHabitFeatures(bridge: RecommendationBridge | null) {
+  if (!bridge) return new Set<HabitDistanceComponent['feature']>();
+  const mapping: Partial<
+    Record<TasteScoreComponentName, HabitDistanceComponent['feature'][]>
+  > = {
+    genres: ['genres'],
+    'genre combinations': ['genres'],
+    keywords: ['keywords'],
+    'country and language': ['countries', 'language'],
+    decade: ['decade'],
+    runtime: ['runtime'],
+  };
+  return new Set(mapping[bridge.component] ?? []);
 }
 
 function buildTonightReasons(
@@ -837,19 +1087,40 @@ function surpriseReasons(
 ) {
   const reasons: string[] = [];
   if (mode === 'wildcard') {
-    if (taste.decadeSampleSize < 3 && taste.decade) {
+    const bridgeFeatures = bridgeHabitFeatures(taste.positiveBridge);
+    const novel = [...taste.habitDistanceComponents]
+      .filter(
+        (component) =>
+          component.distance >= 0.5 && !bridgeFeatures.has(component.feature),
+      )
+      .sort((a, b) => b.distance * b.confidence - a.distance * a.confidence)
+      .slice(0, 2);
+    if (novel.length > 0) {
+      const novelty = novel
+        .map((component) => {
+          const feature =
+            component.feature === 'countries'
+              ? 'country'
+              : component.feature === 'genres'
+                ? 'genre'
+                : component.feature;
+          return `${feature}: ${component.evidence.join(' + ')}`;
+        })
+        .join('; ');
       reasons.push(
-        `${taste.decade} films are still underexplored in your ratings.`,
-      );
-    } else if (taste.habitDistance >= 0.45) {
-      reasons.push(
-        'Its release era sits outside the center of your usual rated history.',
+        `Explores less familiar parts of your history — ${novelty}.`,
       );
     }
-  } else if (mode === 'risky' && taste.decadeSampleSize < 5 && taste.decade) {
-    reasons.push(
-      `Your taste model has only ${taste.decadeSampleSize} rated ${taste.decade} ${taste.decadeSampleSize === 1 ? 'film' : 'films'}, so there is useful uncertainty here.`,
-    );
+  } else if (mode === 'risky') {
+    if (taste.signalAgreement < 0.68) {
+      reasons.push(
+        'Its supported taste signals disagree, making it promising but genuinely uncertain.',
+      );
+    } else {
+      reasons.push(
+        `It has a positive connection with only ${Math.round(taste.evidenceConfidence * 100)}% feature confidence.`,
+      );
+    }
   } else if (
     taste.decade &&
     taste.decadeSampleSize >= 3 &&
@@ -859,10 +1130,18 @@ function surpriseReasons(
       `You rate ${taste.decade} films +${taste.decadeDifference.toFixed(1)} stars above your average.`,
     );
   }
-  if (taste.similarRatedMovie && taste.metadataSimilarity >= 0.35) {
+  if (taste.positiveBridge) {
     reasons.push(
-      `It has a bridge to ${taste.similarRatedMovie.title}, which you rated ${taste.similarRatedMovie.rating} stars.`,
+      `${taste.positiveBridge.label} provides a confidence-backed bridge to your taste.`,
     );
+  }
+  if (taste.similarRatedMovie && taste.metadataSimilarity >= 0.35) {
+    const alreadyExplained = taste.positiveBridge?.component === 'similarity';
+    if (!alreadyExplained) {
+      reasons.push(
+        `It has a bridge to ${taste.similarRatedMovie.title}, which you rated ${taste.similarRatedMovie.rating} stars.`,
+      );
+    }
   }
   const ageReason = waitingReason(movie, taste.watchlistAge);
   if (ageReason) reasons.push(ageReason);
@@ -897,34 +1176,48 @@ export function surpriseMe({
     .map((movie) => {
       const taste = tasteSignals(movie, profile, nowMs);
       const uncertainty = 1 - taste.evidenceConfidence;
-      const positiveBridge = Math.max(
-        taste.metadataSimilarity,
-        taste.decadeFit,
-      );
+      const disagreement = 1 - taste.signalAgreement;
+      const positiveBridge = taste.positiveBridge?.score ?? 0;
+      const bridgeFeatures = bridgeHabitFeatures(taste.positiveBridge);
+      const independentNovelty = taste.habitDistanceComponents
+        .filter((component) => !bridgeFeatures.has(component.feature))
+        .reduce(
+          (strongest, component) =>
+            Math.max(strongest, component.distance * component.confidence),
+          0,
+        );
       const baseScore =
         mode === 'risky'
-          ? taste.tasteScore * 0.42 +
-            uncertainty * 0.32 +
-            positiveBridge * 0.2 +
+          ? taste.tasteScore * 0.45 +
+            uncertainty * 0.17 +
+            disagreement * 0.2 +
+            positiveBridge * 0.12 +
             taste.watchlistAge * 0.06
           : mode === 'wildcard'
-            ? taste.habitDistance * 0.46 +
-              uncertainty * 0.24 +
-              positiveBridge * 0.24 +
+            ? taste.habitDistance * 0.5 +
+              positiveBridge * 0.25 +
+              uncertainty * 0.08 +
+              taste.tasteScore * 0.11 +
               taste.watchlistAge * 0.06
-            : taste.tasteScore * 0.84 +
-              taste.watchlistAge * 0.08 +
-              Math.max(taste.decadeConfidence, taste.genreConfidence) * 0.08;
+            : taste.tasteScore * 0.72 +
+              taste.evidenceConfidence * 0.16 +
+              taste.signalAgreement * 0.08 +
+              taste.watchlistAge * 0.04;
       const score = clamp(
         baseScore + (hashUnit(`${movie.id}:${mode}:${runIndex}`) - 0.5) * 0.008,
       );
-      return { movie, taste, score, positiveBridge };
+      return { movie, taste, score, positiveBridge, independentNovelty };
     })
-    .filter(({ taste, positiveBridge }) =>
+    .filter(({ taste, positiveBridge, independentNovelty }) =>
       mode === 'wildcard'
-        ? positiveBridge >= 0.25 &&
-          (taste.habitDistance >= 0.25 || taste.decadeSampleSize < 3)
-        : true,
+        ? positiveBridge >= 0.14 &&
+          taste.habitDistance >= 0.42 &&
+          independentNovelty >= 0.28 &&
+          taste.tasteScore >= taste.neutralScore - 0.06
+        : mode === 'risky'
+          ? positiveBridge >= 0.08 ||
+            taste.tasteScore >= taste.neutralScore + 0.02
+          : true,
     )
     .sort(
       (a, b) => b.score - a.score || a.movie.title.localeCompare(b.movie.title),
@@ -941,6 +1234,9 @@ export function surpriseMe({
     yearSimilarity: candidate.taste.yearSimilarity,
     watchlistAge: candidate.taste.watchlistAge,
     habitDistance: candidate.taste.habitDistance,
+    habitDistanceComponents: candidate.taste.habitDistanceComponents,
+    positiveBridge: candidate.taste.positiveBridge,
+    signalAgreement: candidate.taste.signalAgreement,
     genreAffinity: candidate.taste.genreAffinity,
     metadataSimilarity: candidate.taste.metadataSimilarity,
     tasteScore: candidate.taste.tasteScore,
