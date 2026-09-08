@@ -12,7 +12,14 @@ export const metadata: Metadata = {
   manifest: `${basePath}/manifest.webmanifest`,
   icons: {
     icon: `${basePath}/favicon.svg`,
-    apple: `${basePath}/icon-192.png`,
+    shortcut: `${basePath}/favicon.svg`,
+    apple: [
+      {
+        url: `${basePath}/apple-touch-icon.png`,
+        sizes: '180x180',
+        type: 'image/png',
+      },
+    ],
   },
   openGraph: {
     type: 'website',

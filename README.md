@@ -120,7 +120,9 @@ For security, the TMDB token is not included in backups.
 4. Tap **Add**.
 
 Movie Companion will then open from your Home Screen in a standalone,
-app-like view.
+app-like view with its own purple Movie Companion icon. If you installed an
+older version and still see a generic icon, remove that shortcut and add it
+again so iOS refreshes the saved icon.
 
 ## Can someone else use it?
 

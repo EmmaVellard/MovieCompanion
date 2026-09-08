@@ -1,8 +1,9 @@
-const CACHE_NAME = 'movie-companion-shell-v3';
+const CACHE_NAME = 'movie-companion-shell-v4';
 const APP_ROOT = new URL('./', self.registration.scope).href;
 const APP_SHELL = [
   APP_ROOT,
   new URL('favicon.svg', APP_ROOT).href,
+  new URL('apple-touch-icon.png', APP_ROOT).href,
   new URL('icon-192.png', APP_ROOT).href,
   new URL('icon-512.png', APP_ROOT).href,
 ];
