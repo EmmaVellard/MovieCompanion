@@ -1,22 +1,5 @@
-<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="background" x1="64" y1="40" x2="448" y2="472" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#A66CFF"/>
-      <stop offset="1" stop-color="#7E3FDB"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="112" fill="url(#background)"/>
-  <g fill="#FCFAFF">
-    <rect x="120" y="128" width="272" height="256" rx="48"/>
-  </g>
-  <g fill="url(#background)">
-    <rect x="198" y="164" width="116" height="74" rx="6"/>
-    <rect x="198" y="274" width="116" height="74" rx="6"/>
-    <rect x="146" y="164" width="32" height="40" rx="5"/>
-    <rect x="146" y="236" width="32" height="40" rx="5"/>
-    <rect x="146" y="308" width="32" height="40" rx="5"/>
-    <rect x="334" y="164" width="32" height="40" rx="5"/>
-    <rect x="334" y="236" width="32" height="40" rx="5"/>
-    <rect x="334" y="308" width="32" height="40" rx="5"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#4d375f"/>
+  <circle cx="256" cy="256" r="164" fill="none" stroke="#ae96bd" stroke-width="2"/>
+  <text x="256" y="309" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="190" fill="#ffffff">m.</text>
 </svg>

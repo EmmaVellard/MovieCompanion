@@ -1,4 +1,4 @@
-const CACHE_NAME = 'movie-companion-shell-v4';
+const CACHE_NAME = 'movie-companion-shell-v5';
 const APP_ROOT = new URL('./', self.registration.scope).href;
 const APP_SHELL = [
   APP_ROOT,
